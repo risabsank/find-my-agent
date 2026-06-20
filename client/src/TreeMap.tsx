@@ -35,8 +35,11 @@ export function useTreemapLayout(
     if (!tree || width <= 0 || height <= 0) {
       return { width, height, rects: [], byPath: new Map() };
     }
+    // Weight every file equally (not by byte size) so each file gets a legible
+    // cell and small newly-created files are clearly visible — this map is about
+    // structure and agent location, not disk usage.
     const root = hierarchy<TreeNode>(tree, (d) => d.children)
-      .sum((d) => (d.type === "file" ? Math.max(d.size ?? 1, 1) : 0))
+      .sum((d) => (d.type === "file" ? 1 : 0))
       .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
 
     treemap<TreeNode>()

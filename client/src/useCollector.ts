@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentState, ServerMessage, TreeNode } from "./types.ts";
-import { COLLECTOR_WS } from "../../shared/config.ts";
+
+// Connect to the collector on the same origin that served this page, so the app
+// works on any host/port (the collector serves the UI and the WS together).
+const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
 
 export interface CollectorState {
   connected: boolean;
@@ -11,7 +14,8 @@ export interface CollectorState {
 
 /**
  * Opens a WebSocket to the collector and reduces snapshot + event messages into
- * live state. Auto-reconnects if the socket drops.
+ * live state. Auto-reconnects if the socket drops. The tree is re-applied
+ * whenever the server pushes a change, so the map expands/contracts live.
  */
 export function useCollector(): CollectorState {
   const [connected, setConnected] = useState(false);
@@ -27,8 +31,13 @@ export function useCollector(): CollectorState {
 
     const flush = () => setAgents([...agentsRef.current.values()]);
 
+    const applyTree = (next: TreeNode) => {
+      setTree(next);
+      setRepoName(next.name);
+    };
+
     const connect = () => {
-      ws = new WebSocket(COLLECTOR_WS);
+      ws = new WebSocket(WS_URL);
 
       ws.onopen = () => setConnected(true);
 
@@ -36,8 +45,8 @@ export function useCollector(): CollectorState {
         const msg: ServerMessage = JSON.parse(e.data);
         switch (msg.type) {
           case "snapshot": {
-            if (msg.tree) setTree(msg.tree);
-            setRepoName(msg.repoName);
+            if (msg.tree) applyTree(msg.tree);
+            else setRepoName(msg.repoName);
             agentsRef.current = new Map(msg.agents.map((a) => [a.agentId, a]));
             flush();
             break;
@@ -50,6 +59,10 @@ export function useCollector(): CollectorState {
           case "agentRemoved": {
             agentsRef.current.delete(msg.agentId);
             flush();
+            break;
+          }
+          case "tree": {
+            applyTree(msg.tree);
             break;
           }
         }

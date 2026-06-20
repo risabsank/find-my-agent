@@ -5,3 +5,6 @@ dist/
 bun.lockb
 .env
 .env.local
+# Note: demo/scratch/ is intentionally NOT ignored — the live map honors
+# .gitignore, so ignoring it would hide the demo's dynamically-created files.
+# demo/simulate.ts removes it on exit (SIGINT + finally).

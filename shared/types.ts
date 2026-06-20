@@ -112,7 +112,17 @@ export interface AgentRemovedMessage {
   agentId: string;
 }
 
+/** Pushed whenever the mapped repo's file tree changes (create/delete/rename). */
+export interface TreeMessage {
+  type: "tree";
+  tree: TreeNode;
+  repoName: string;
+  /** Repo-relative paths that appeared since the previous tree (create/rename). */
+  newPaths: string[];
+}
+
 export type ServerMessage =
   | SnapshotMessage
   | EventMessage
-  | AgentRemovedMessage;
+  | AgentRemovedMessage
+  | TreeMessage;

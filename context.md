@@ -1,0 +1,193 @@
+# context.md — agent handoff for "Find My Agent"
+
+> Purpose: everything a coding agent (Claude, Codex, or otherwise) needs to
+> resume work on this repo in a fresh session. Read this first. **Keep it
+> updated** when you change architecture, add features, or learn a non-obvious
+> fact. This file is provider-agnostic — nothing here assumes Claude Code.
+
+Last updated: 2026-06-20.
+
+> Note: `fma` is already `bun link`-ed globally on this machine (lands in
+> `~/.bun/bin/fma`). To remove it: run `bun unlink` from the repo root.
+
+## What this project is
+A real-time, "Find My"-style dashboard that visualizes parallel Claude Code
+agents working on a codebase. The **repo's file tree is the map** (a treemap:
+directories are regions, files are cells), and each agent is a moving dot placed
+on the file it's currently touching. A side panel shows per-agent task, tool,
+file, elapsed time, recent activity, and (stubbed) token/cost. Clicking an agent
+zooms the map to its region and opens a detail panel.
+
+Data source: Claude Code's real **hook system** (native `type:"http"` hooks) →
+a local collector → WebSocket → React UI. A fake-event generator (`demo/`)
+exists for design/iteration without a live agent.
+
+## Tech stack & runtime
+- **TypeScript everywhere.** Monorepo with Bun workspaces.
+- **Runtime: Bun** (v1.3.14). Server runs directly on Bun (`Bun.serve`, built-in
+  WebSocket). Client is Vite + React 18 + `d3-hierarchy`.
+- No database (in-memory store). No auth. localhost only. v1.
+- **Bun is at `~/.bun/bin/bun`.** It was installed via the official script, which
+  only added it to `~/.bash_profile`; the user's shell is **zsh**, so `bun` is
+  NOT on PATH in a fresh zsh terminal. Either prefix `PATH="$HOME/.bun/bin:$PATH"`
+  or the user adds it to `~/.zshrc`. (`node` v24 is available but the project
+  targets Bun.)
+
+## Easiest way to use it (the `fma` CLI) — single port, one link
+The collector now **serves the UI itself**, so the whole app is one URL:
+`http://localhost:4000`. There is no separate Vite server in normal use.
+
+One-time setup:
+```bash
+bun install
+bun link            # exposes the global `fma` command (lands in ~/.bun/bin)
+fma install         # adds HTTP hooks to ~/.claude/settings.json (global, once)
+```
+Each coding session:
+```bash
+cd ~/your-project && fma     # builds UI if needed, starts collector mapping cwd,
+                             # opens http://localhost:4000 — keep it open on the side
+```
+`fma` flags: `--port N`, `--no-open`. Other commands: `fma watch [path]`,
+`fma install --project [path]`, `fma uninstall [--project path]`, `fma help`.
+With global hooks, every Claude Code session reports automatically; when the
+collector isn't running the hooks fail instantly (no slowdown). Run `fma` in the
+**one** repo you want to mapped at a time.
+
+## Dev / manual run (without the CLI)
+```bash
+bun run server              # collector + UI on :4000 (TARGET_REPO env or cwd)
+bun run client              # Vite dev server on :5173 (HMR; dev only)
+bun run demo                # fake hook events so the map moves
+bun run build               # build client/dist (what the collector serves)
+```
+- Mapped repo: `TARGET_REPO=/path bun run server`. Port: `COLLECTOR_PORT=4100`.
+- Typecheck: `bunx tsc --noEmit`.
+
+## Hooks (what `fma install` writes)
+HTTP hooks (`type:"http"` → `http://localhost:4000/events`, `timeout:5`) for
+SessionStart/SessionEnd/UserPromptSubmit/PreToolUse/PostToolUse/SubagentStart/
+SubagentStop/Stop. Global = `~/.claude/settings.json`; project =
+`<repo>/.claude/settings.json`. Merge logic lives in `hooks/install.ts`
+(`installHooks`/`uninstallHooks`, reused by the CLI). The collector logs every
+raw payload as `[event] {...}` for schema discovery.
+
+## Architecture / data flow
+```
+Claude Code hooks ──HTTP POST /events──▶ collector (Bun)
+   (SessionStart, UserPromptSubmit,        normalize → AgentStore (in-memory)
+    PreToolUse, PostToolUse, Subagent*,     debounced repo re-scan (tree)
+    Stop, SessionEnd)                       broadcast over WebSocket
+                                                     │
+                                          ws://localhost:4000/ws
+                                                     ▼
+                                          React client: treemap + dots + panel
+```
+WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessage`:
+- `snapshot` — initial: `{agents, tree, repoName}`.
+- `event` — `{event: NormalizedEvent, agent: AgentState}` per hook.
+- `agentRemoved` — `{agentId}` when an agent is swept.
+- `tree` — `{tree, repoName, newPaths}` pushed when the repo's files change.
+
+## File map (what lives where)
+- `shared/types.ts` — **the data model**: `AgentState`, `NormalizedEvent`,
+  `TreeNode`, `TokenUsage`, `ActivityEntry`, `ServerMessage` union. Start here.
+- `shared/config.ts` — `COLLECTOR_PORT` (4000), URLs, sweep timings.
+- `server/src/index.ts` — `Bun.serve`: routes (`/events`, `/api/tree`,
+  `/api/agents`, `/api/health`, `/ws`), CORS, `targetRepo` resolution (env or
+  adopt first event's cwd), **debounced `scheduleRescan()` → `tree` broadcast**,
+  5s sweep interval.
+- `server/src/normalize.ts` — raw hook payload → `NormalizedEvent`. Resolves
+  `tool_input.file_path` to a repo-relative path (worktree-aware). Subagent
+  detection lives here (see "Open questions").
+- `server/src/store.ts` — `AgentStore`: in-memory `Map<agentId, AgentState>`,
+  status mapping, color assignment, `recentActivity`/`eventCount`, stale sweep.
+- `server/src/tree.ts` — `scanTree(rootDir)`: filesystem → `TreeNode`,
+  **honors `.gitignore`** (subset) + a default ignore list (node_modules, .git,
+  dist…), drops empty dirs, depth cap 12.
+- `server/src/tokens.ts` — `TokenSource` interface + `StubTokenSource`
+  (placeholder numbers, `isStub:true`). **OTEL adapter is the intended real
+  source** (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, metric `claude_code.token.usage`).
+- `server/src/ws.ts` — `Broadcaster` (set of WS clients + broadcast).
+- `client/src/useCollector.ts` — WS hook; reduces snapshot/event/tree/agentRemoved
+  into state; auto-reconnects. Re-applies the tree on `tree` messages (live map).
+- `client/src/TreeMap.tsx` — `useTreemapLayout` (d3 squarified treemap),
+  `Territory` renderer, `resolveCell`/`regionRect`/`cellCenter` helpers.
+- `client/src/Pins.tsx` — `Pin` (HTML, constant-size via counter-scale),
+  `Trails`, `Tooltip`.
+- `client/src/AgentList.tsx` — sidebar list (subagents nested).
+- `client/src/AgentDetail.tsx` — focus panel: task, lifecycle "progress"
+  (estimated), token split, stats, recent activity.
+- `client/src/App.tsx` — composition: topbar (brand, repo, search, conn, count),
+  map with zoom-to-region focus, sidebar (list ⇄ detail), legend.
+- `client/src/ui.ts` — `STATUS` palette, `agentLabel`/`typeName`, formatters.
+- `client/src/styles.css` — oklch dark theme, `--accent`. Geist fonts linked in
+  `client/index.html`.
+- `hooks/settings.snippet.json` — the `.claude/settings.json` hooks block
+  (HTTP hooks → `http://localhost:4000/events`, `timeout:5`).
+- `hooks/install.ts` — exported `installHooks`/`uninstallHooks` (global + project)
+  + standalone CLI (guarded by `import.meta.main`).
+- `cli/fma.ts` — the `fma` launcher (bin). `watch` (build-if-needed, start
+  collector mapping cwd, serve UI, open browser, reuse a running collector),
+  `install`/`uninstall` (global default, `--project` opt), `help`.
+- `demo/simulate.ts` — fake hook event generator; also creates/removes real files
+  under `demo/scratch/` to demonstrate the live-expanding map (auto-cleaned).
+
+## Key behaviors & non-obvious decisions
+- **Live file map (expand/contract).** The collector re-scans the repo (debounced
+  ~800ms) on file-mutating events / unknown paths / session start-stop, plus a 5s
+  sweep safety-net while agents are active, and pushes a `tree` message. Reflects
+  create, delete, and rename. (Implemented in `server/src/index.ts`.)
+- **Treemap weights every file EQUALLY** (`.sum(() => 1)`), NOT by byte size.
+  Reason: size-weighting made small/new files sub-pixel and culled by the
+  `w<1||h<1` guard; this map is about structure + agent location, not disk usage.
+  Do not revert to size weighting without restoring visibility for tiny files.
+- **Dots are HTML, in a transform layer counter-scaled by `1/k`** so they stay a
+  constant screen size while the map zooms. File cells are SVG.
+- **Token/cost is STUBBED** end-to-end (`isStub:true`, "stub" chip in UI). The
+  swap-in point is `TokenSource` in `server/src/tokens.ts`.
+- **"Progress" in the detail panel is estimated** from agent lifecycle/status
+  (Started/Active/Finished), not real progress — it's explicitly tagged
+  "estimated". There is no real progress signal from hooks.
+- **`.gitignore` is honored by the map scan.** Good for real repos (keeps
+  node_modules/build off the map). Note: `demo/scratch/` is intentionally NOT
+  gitignored, or the demo's created files would be hidden from the map.
+
+## Open questions / known gaps
+- **Subagent identity is unconfirmed.** Docs confirm `SubagentStart`/`SubagentStop`
+  exist but don't document an explicit subagent-id field. `normalize.ts` probes a
+  defensive list `SUBAGENT_ID_FIELDS` (`subagent_id`, `parent_session_id`, …) and
+  falls back to treating events as the main agent. **TODO:** run a real Task
+  subagent, inspect the `[event]` logs, confirm the real field, trim the list.
+- **A "new file flash" was attempted and removed.** The diff/`setNewPaths` state
+  update would not commit reliably in the preview test harness (traced
+  thoroughly; server + diff logic were correct). Removed rather than ship an
+  unverified cosmetic. If re-adding, verify in a real browser, not the preview.
+- **AI "Fleet Observer" is planned but NOT built** (deferred). Plan:
+  `~/.claude/plans/if-i-wanted-an-smooth-wave.md` once held it; the agreed design
+  was a read-only observer (continuous + on-demand "Diagnose") using
+  `claude-sonnet-4-6`, requiring `ANTHROPIC_API_KEY`, mirroring the `TokenSource`
+  stub pattern. If implementing: use `@anthropic-ai/sdk`, structured outputs for
+  the periodic pass, a read-only tool-use loop for diagnosis.
+
+## Migrating the coding session to Codex (or another agent)
+This project's *content* is provider-neutral, but two things are Claude-specific:
+1. **The hook integration** (`hooks/`) targets Claude Code's hook system. Codex
+   has a different (or no) hook mechanism — if the new agent can't emit hooks,
+   you can still drive the dashboard by POSTing JSON to `/events` (any source).
+   The `/events` endpoint accepts arbitrary JSON and normalizes defensively; the
+   minimum useful payload is `{session_id, cwd, hook_event_name, tool_name,
+   tool_input:{file_path}}`.
+2. **The token layer** assumes Claude Code's OTEL metric. For another agent, feed
+   `TokenSource` from whatever usage signal that agent provides.
+Everything else (collector, treemap, UI, store) is plain TS and portable.
+
+## Verification checklist (do this after changes)
+1. `bunx tsc --noEmit` is clean.
+2. `bun run server` + `bun run client` + `bun run demo` → in the browser the map
+   shows dots moving, the `demo/scratch` files appear then disappear (expand/
+   contract), and clicking an agent zooms + opens the detail panel.
+3. For real-session work: install hooks into a scratch repo, point `TARGET_REPO`
+   at it, run the agent, create/delete a file, confirm the cell appears/vanishes
+   within ~1-2s.
+4. `cd client && bunx vite build` succeeds.

@@ -8,12 +8,17 @@
     "client",
     "hooks"
   ],
+  "bin": {
+    "fma": "cli/fma.ts"
+  },
   "scripts": {
+    "fma": "bun run cli/fma.ts",
+    "build": "bun run --cwd client build",
     "server": "bun run server/src/index.ts",
     "demo": "bun run demo/simulate.ts",
     "client": "bun run --cwd client dev",
     "hooks:install": "bun run hooks/install.ts",
-    "dev": "echo 'Run in 3 terminals: `bun run server`, `bun run client`, then `bun run demo`'"
+    "dev": "echo 'Dev: `bun run server` + `bun run client` (Vite/HMR). Users: just `fma`.'"
   },
   "devDependencies": {
     "bun-types": "^1.3.14",

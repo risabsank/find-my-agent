@@ -9,7 +9,7 @@
     },
     {
       "name": "collector",
-      "runtimeExecutable": "bun",
+      "runtimeExecutable": "/Users/risabsankarstuff/.bun/bin/bun",
       "runtimeArgs": ["run", "server/src/index.ts"],
       "port": 4000
     }

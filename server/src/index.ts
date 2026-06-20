@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { existsSync, statSync } from "node:fs";
 import type { TreeNode } from "../../shared/types.ts";
 import { COLLECTOR_PORT } from "../../shared/config.ts";
 import { AgentStore } from "./store.ts";
@@ -13,21 +13,69 @@ import { scanTree } from "./tree.ts";
 // with a cwd and no tree exists yet, we adopt that cwd.
 let targetRepo = resolve(process.env.TARGET_REPO || process.cwd());
 
+// Tools whose completion may have created/changed/deleted files on disk.
+const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
+// Built client UI, served from the install dir (not the mapped repo).
+const DIST_DIR = resolve(import.meta.dir, "../../client/dist");
+
 // ---- Tree cache (re-scan with a short TTL so edits show up) ------------------
 let treeCache: { node: TreeNode; at: number } | null = null;
 const TREE_TTL_MS = 8000;
+
+/** Flatten every path contained in a tree into a set. */
+function collectPaths(node: TreeNode, out = new Set<string>()): Set<string> {
+  out.add(node.path);
+  if (node.children) for (const c of node.children) collectPaths(c, out);
+  return out;
+}
+
+/** Paths in the last tree we broadcast — the baseline for "what's new". */
+let lastBroadcastPaths = new Set<string>();
 
 function getTree(): TreeNode | null {
   if (!existsSync(targetRepo)) return null;
   const now = Date.now();
   if (!treeCache || now - treeCache.at > TREE_TTL_MS) {
-    treeCache = { node: scanTree(targetRepo), at: now };
+    const node = scanTree(targetRepo);
+    treeCache = { node, at: now };
+    // Establish the diff baseline the first time we ever build the tree, so a
+    // later file event flashes only genuinely-new files (not the whole repo).
+    if (lastBroadcastPaths.size === 0) lastBroadcastPaths = collectPaths(node);
   }
   return treeCache.node;
 }
 
 const store = new AgentStore();
 const bus = new Broadcaster();
+
+// ---- Live tree updates ------------------------------------------------------
+// Re-scan the repo (debounced) and push the new tree to clients when it changes.
+const RESCAN_DEBOUNCE_MS = 800;
+let rescanTimer: ReturnType<typeof setTimeout> | null = null;
+
+function runRescan(): void {
+  rescanTimer = null;
+  if (!existsSync(targetRepo)) return;
+  const next = scanTree(targetRepo);
+  treeCache = { node: next, at: Date.now() };
+
+  const nextPaths = collectPaths(next);
+  const newPaths: string[] = [];
+  for (const p of nextPaths) if (!lastBroadcastPaths.has(p)) newPaths.push(p);
+  // Changed if anything was added (newPaths) or the total count shifted (removed).
+  const changed = newPaths.length > 0 || nextPaths.size !== lastBroadcastPaths.size;
+  if (!changed) return; // stay quiet
+
+  lastBroadcastPaths = nextPaths;
+  bus.broadcast({ type: "tree", tree: next, repoName: next.name, newPaths });
+}
+
+/** Coalesce bursts: at most one re-scan per debounce window. */
+function scheduleRescan(): void {
+  if (rescanTimer) return;
+  rescanTimer = setTimeout(runRescan, RESCAN_DEBOUNCE_MS);
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -81,6 +129,21 @@ const server = Bun.serve({
       const ev = normalize(raw, targetRepo);
       const agent = store.apply(ev);
       bus.broadcast({ type: "event", event: ev, agent });
+
+      // Re-scan the file map when the repo may have changed: a file-mutating
+      // tool finished, a path we've never seen showed up, or the session
+      // started/stopped. Debounced, so bursts coalesce into one scan.
+      if (
+        ev.event === "SessionStart" ||
+        ev.event === "Stop" ||
+        ev.event === "SessionEnd" ||
+        (ev.event === "PostToolUse" &&
+          ev.tool != null &&
+          FILE_TOOLS.has(ev.tool)) ||
+        (ev.filePath != null && !lastBroadcastPaths.has(ev.filePath))
+      ) {
+        scheduleRescan();
+      }
       return json({ ok: true }); // respond immediately — never blocks the agent
     }
 
@@ -99,6 +162,27 @@ const server = Bun.serve({
         agents: store.snapshot().length,
         clients: bus.size,
       });
+    }
+
+    // Static UI: serve the built client so the whole app lives on one port.
+    if (req.method === "GET") {
+      const indexPath = join(DIST_DIR, "index.html");
+      if (!existsSync(indexPath)) {
+        return new Response(
+          "UI not built yet. Run `fma` (it builds automatically) or `bun run build`.",
+          { status: 503, headers: CORS },
+        );
+      }
+      const rel = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      const candidate = join(DIST_DIR, rel);
+      if (
+        candidate.startsWith(DIST_DIR) &&
+        existsSync(candidate) &&
+        statSync(candidate).isFile()
+      ) {
+        return new Response(Bun.file(candidate)); // asset (Bun infers MIME)
+      }
+      return new Response(Bun.file(indexPath)); // SPA fallback
     }
 
     return new Response("Find My Agent collector. See /api/health", {
@@ -148,6 +232,11 @@ setInterval(() => {
   }
   for (const agentId of removed) {
     bus.broadcast({ type: "agentRemoved", agentId });
+  }
+  // Safety net for files created via Bash (mkdir/touch/mv carry no file_path):
+  // while any agent is active, periodically reconcile the map with disk.
+  if (store.snapshot().some((a) => a.status === "working" || a.status === "waiting")) {
+    scheduleRescan();
   }
 }, 5000);
 

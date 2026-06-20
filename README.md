@@ -9,6 +9,10 @@ currently touching. See each agent's task, current tool, elapsed time, and
 
 ![status](https://img.shields.io/badge/status-v1-blue)
 
+> **Working on this codebase (new session / different agent)?** Read
+> [context.md](context.md) first — it's the handoff doc with architecture,
+> gotchas, open questions, and a Codex-migration note. Keep it updated.
+
 ```
  ┌──────────────────────────────┬───────────────┐
  │  server/                     │  AGENTS  2    │
@@ -44,7 +48,33 @@ currently touching. See each agent's task, current tool, elapsed time, and
 
 - [Bun](https://bun.sh) ≥ 1.3 (`curl -fsSL https://bun.sh/install | bash`)
 
-## Install
+## Quickest start (the `fma` CLI)
+
+The collector serves the dashboard itself, so the whole app is **one link**:
+`http://localhost:4000`.
+
+```bash
+# one-time setup
+bun install
+bun link          # exposes the global `fma` command (needs ~/.bun/bin on PATH)
+fma install       # adds HTTP hooks to ~/.claude/settings.json (global, once)
+
+# every coding session — run inside the repo you're working in:
+cd ~/your-project && fma
+```
+
+`fma` builds the UI if needed, starts the collector mapping the current repo,
+and opens the dashboard. Keep the tab open on the side; Ctrl-C to stop. With the
+global hooks installed, **every** Claude Code session reports automatically (and
+when the collector isn't running the hooks fail instantly — no slowdown).
+
+Flags/commands: `fma --port N`, `fma --no-open`, `fma watch [path]`,
+`fma install --project [path]`, `fma uninstall [--project path]`, `fma help`.
+
+> On zsh, make sure `~/.bun/bin` is on your PATH (Bun's installer only writes
+> `~/.bash_profile`): `echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.zshrc`.
+
+## Install (manual / dev)
 
 ```bash
 bun install
@@ -113,9 +143,21 @@ claude
 
 Hooks fire as the agent works; a live dot appears and moves across the map.
 
+> **The map is live.** The collector re-scans the repo as the session runs, so
+> the treemap **expands when Claude creates files and contracts when it deletes
+> them**, and a dot lands on a file the moment it's written. Edits, renames, and
+> Bash-created files are all reflected (debounced re-scan, ~1s).
+
 > **Non-blocking:** there is no `async` hook field. We achieve non-blocking by a
 > short `timeout` and the collector replying `200 {}` instantly, so hooks never
 > stall the agent.
+
+> **Confirming the real payload schema.** The collector logs every raw hook
+> payload (`[event] …`). Run a real session — especially one that spawns a Task
+> subagent — and inspect those logs to confirm the actual subagent-id field, then
+> trim the `SUBAGENT_ID_FIELDS` probe list in
+> [server/src/normalize.ts](server/src/normalize.ts). v1 ships a defensive guess
+> rather than inventing the schema.
 
 ### 4. Two agents in parallel (multiple dots) via git worktrees
 
