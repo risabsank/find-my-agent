@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "client",
+      "runtimeExecutable": "/Users/risabsankarstuff/.bun/bin/bun",
+      "runtimeArgs": ["run", "--cwd", "client", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "collector",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "server/src/index.ts"],
+      "port": 4000
+    }
+  ]
+}

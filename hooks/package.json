@@ -1,0 +1,9 @@
+{
+  "name": "@find-my-agent/hooks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install-hooks": "bun run install.ts"
+  }
+}

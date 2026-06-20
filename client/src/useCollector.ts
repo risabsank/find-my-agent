@@ -1,0 +1,76 @@
+import { useEffect, useRef, useState } from "react";
+import type { AgentState, ServerMessage, TreeNode } from "./types.ts";
+import { COLLECTOR_WS } from "../../shared/config.ts";
+
+export interface CollectorState {
+  connected: boolean;
+  tree: TreeNode | null;
+  repoName: string;
+  agents: AgentState[];
+}
+
+/**
+ * Opens a WebSocket to the collector and reduces snapshot + event messages into
+ * live state. Auto-reconnects if the socket drops.
+ */
+export function useCollector(): CollectorState {
+  const [connected, setConnected] = useState(false);
+  const [tree, setTree] = useState<TreeNode | null>(null);
+  const [repoName, setRepoName] = useState("repo");
+  const [agents, setAgents] = useState<AgentState[]>([]);
+  const agentsRef = useRef<Map<string, AgentState>>(new Map());
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+
+    const flush = () => setAgents([...agentsRef.current.values()]);
+
+    const connect = () => {
+      ws = new WebSocket(COLLECTOR_WS);
+
+      ws.onopen = () => setConnected(true);
+
+      ws.onmessage = (e) => {
+        const msg: ServerMessage = JSON.parse(e.data);
+        switch (msg.type) {
+          case "snapshot": {
+            if (msg.tree) setTree(msg.tree);
+            setRepoName(msg.repoName);
+            agentsRef.current = new Map(msg.agents.map((a) => [a.agentId, a]));
+            flush();
+            break;
+          }
+          case "event": {
+            agentsRef.current.set(msg.agent.agentId, msg.agent);
+            flush();
+            break;
+          }
+          case "agentRemoved": {
+            agentsRef.current.delete(msg.agentId);
+            flush();
+            break;
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        if (!closed) reconnectTimer = setTimeout(connect, 1500);
+      };
+
+      ws.onerror = () => ws?.close();
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, []);
+
+  return { connected, tree, repoName, agents };
+}

@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "http", "url": "http://localhost:4000/events", "timeout": 5 }] }
+    ]
+  }
+}
