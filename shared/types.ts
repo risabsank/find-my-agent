@@ -29,6 +29,47 @@ export interface ActivityEntry {
   ts: number;
 }
 
+// ---- Alignment Autopilot ----------------------------------------------------
+
+/** What an agent is supposed to be doing — its intended scope + guardrails. */
+export interface Mission {
+  /** Plain-language objective (auto-derived from the prompt, or set in the UI). */
+  goal: string;
+  /** Human-readable rules, e.g. "don't modify tests". */
+  guardrails: string[];
+  /** Glob-ish path patterns the agent must NOT touch, e.g. "auth/**". */
+  denyGlobs: string[];
+  source: "prompt" | "manual" | "merged";
+}
+
+/** The AI's latest judgment of whether an agent is on-mission. */
+export interface Alignment {
+  state: "on_track" | "drifting" | "off_track" | "unknown";
+  reason?: string;
+  /** Concrete steering text injected/denied-with when off course. */
+  correction?: string;
+  severity?: "low" | "med" | "high";
+  at: number; // epoch ms
+}
+
+/** One supervisor action, for the live intervention timeline. */
+export interface InterventionEntry {
+  agentId: string;
+  kind: "detected" | "nudge" | "block" | "recovered";
+  reason: string;
+  tool?: string;
+  filePath?: string;
+  ts: number;
+}
+
+/** Global autopilot state shown in the topbar. */
+export interface SupervisorStatus {
+  enabled: boolean; // false when no ANTHROPIC_API_KEY
+  autonomous: boolean; // act automatically vs. observe-only
+  killSwitch: boolean; // hard stop: never intervene
+  model: string;
+}
+
 export interface AgentState {
   /** sessionId for top-level agents, or `sessionId:subagentKey` for subagents. */
   agentId: string;
@@ -53,6 +94,10 @@ export interface AgentState {
   eventCount: number;
   /** Most recent actions, newest last. Capped server-side. */
   recentActivity: ActivityEntry[];
+  /** What this agent is supposed to be doing (autopilot). */
+  mission?: Mission;
+  /** Latest AI alignment verdict (autopilot). */
+  alignment?: Alignment;
   /** Assigned per top-level agent; subagents inherit + shade. CSS color string. */
   color: string;
 }
@@ -98,6 +143,9 @@ export interface SnapshotMessage {
   tree: TreeNode | null;
   /** Repo-relative path used to anchor "thinking" dots, or repo name. */
   repoName: string;
+  /** Autopilot state + recent interventions (for late-joining clients). */
+  supervisor: SupervisorStatus;
+  interventions: InterventionEntry[];
 }
 
 export interface EventMessage {
@@ -121,8 +169,22 @@ export interface TreeMessage {
   newPaths: string[];
 }
 
+/** A supervisor action happened (live timeline). */
+export interface InterventionMessage {
+  type: "intervention";
+  entry: InterventionEntry;
+}
+
+/** Autopilot status changed (enabled/autonomous/kill-switch). */
+export interface SupervisorStatusMessage {
+  type: "supervisorStatus";
+  supervisor: SupervisorStatus;
+}
+
 export type ServerMessage =
   | SnapshotMessage
   | EventMessage
   | AgentRemovedMessage
-  | TreeMessage;
+  | TreeMessage
+  | InterventionMessage
+  | SupervisorStatusMessage;

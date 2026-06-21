@@ -224,7 +224,54 @@ body{
 .act-file{ flex:1; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
 .act-ago{ color:var(--text-3); flex-shrink:0; font-size:10.5px; }
 
+/* ===== AUTOPILOT (topbar control) ===== */
+.autopilot{ display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-2);
+  padding:3px 9px; background:var(--bg-2); border:1px solid var(--border-soft); border-radius:20px; }
+.autopilot.ap-disabled{ color:var(--text-3); }
+.ap-dot{ width:7px; height:7px; border-radius:50%; background:var(--text-3); }
+.ap-dot.ap-on{ background:oklch(0.74 0.12 150); box-shadow:0 0 0 3px color-mix(in oklch, oklch(0.74 0.12 150) 22%, transparent); animation:livepulse 2.4s ease-in-out infinite; }
+.ap-dot.ap-watch{ background:oklch(0.80 0.14 75); }
+.ap-dot.ap-off{ background:oklch(0.64 0.19 25); }
+.ap-label{ font-weight:500; }
+.ap-toggle,.ap-kill{ font-family:var(--sans); font-size:11px; cursor:pointer; color:var(--text-2);
+  background:var(--bg-3); border:1px solid var(--border); border-radius:5px; padding:2px 7px; }
+.ap-toggle:hover,.ap-kill:hover{ color:var(--text); border-color:color-mix(in oklch, var(--accent) 45%, var(--border)); }
+.ap-kill.armed{ color:oklch(0.86 0.11 30); border-color:oklch(0.5 0.12 30); background:oklch(0.26 0.06 30); }
+
+/* ===== ALIGNMENT + MISSION (detail panel) ===== */
+.align-badge{ font-size:11px; font-weight:600; border:1px solid; border-radius:11px; padding:1px 8px; }
+.align-correction{ font-size:12.5px; color:var(--text); line-height:1.45; margin:8px 0 0;
+  padding:8px 10px; background:color-mix(in oklch, var(--accent) 10%, var(--bg-2));
+  border:1px solid color-mix(in oklch, var(--accent) 35%, var(--border)); border-radius:8px; }
+.mission-form{ display:flex; flex-direction:column; gap:7px; }
+.mission-form textarea,.mission-form input{ width:100%; resize:vertical; font-family:var(--sans);
+  font-size:12.5px; color:var(--text); background:var(--bg-2); border:1px solid var(--border-soft);
+  border-radius:7px; padding:7px 9px; }
+.mission-form textarea:focus,.mission-form input:focus{ outline:none; border-color:color-mix(in oklch, var(--accent) 55%, var(--border)); }
+.mission-deny{ font-family:var(--mono); font-size:11.5px; }
+.mission-save{ align-self:flex-start; font-family:var(--sans); font-size:12px; cursor:pointer;
+  color:#fff; background:color-mix(in oklch, var(--accent) 70%, var(--bg)); border:1px solid var(--accent);
+  border-radius:7px; padding:5px 12px; }
+.mission-save:hover{ background:var(--accent); }
+
+/* intervention timeline (detail) */
+.feed.intervene li{ align-items:flex-start; gap:8px; padding:6px 2px; }
+.iv-kind{ flex-shrink:0; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.04em; width:72px; }
+.iv-reason{ flex:1; color:var(--text-2); line-height:1.35; }
+.iv-ago{ flex-shrink:0; color:var(--text-3); font-size:10.5px; }
+
+/* ===== LIVE INTERVENTION STRIP (over the map) ===== */
+.iv-strip{ position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:8;
+  display:flex; flex-direction:column; gap:7px; width:min(560px, 70%); pointer-events:none; }
+.iv-toast{ display:flex; align-items:baseline; gap:9px; font-size:12px;
+  background:oklch(0.2 0.007 255 / .92); border:1px solid var(--border); border-left-width:3px;
+  border-radius:9px; padding:7px 11px; backdrop-filter:blur(8px); box-shadow:0 8px 24px oklch(0 0 0 / .45); }
+.iv-toast-kind{ font-weight:700; text-transform:uppercase; font-size:10px; letter-spacing:.05em; flex-shrink:0; }
+.iv-toast-who{ font-weight:600; color:var(--text); flex-shrink:0; }
+.iv-toast-reason{ color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pin-flag{ margin-left:5px; }
+
 @media (prefers-reduced-motion: reduce){
   .pin-layer,.territory-g,.pbar-fill{ transition:none; }
-  .pin-pulse,.conn--on .conn-dot,.hint-radar::before,.hint-radar::after{ animation:none; }
+  .pin-pulse,.conn--on .conn-dot,.hint-radar::before,.hint-radar::after,.ap-dot.ap-on{ animation:none; }
 }

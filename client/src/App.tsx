@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useCollector } from "./useCollector.ts";
+import { useCollector, setMissionApi, setSupervisorApi } from "./useCollector.ts";
 import {
   useTreemapLayout,
   Territory,
@@ -10,10 +10,10 @@ import {
 import { Pin, Trails, Tooltip, type TrailData } from "./Pins.tsx";
 import { AgentListPanel } from "./AgentList.tsx";
 import { AgentDetail } from "./AgentDetail.tsx";
-import { STATUS, typeName, agentLabel } from "./ui.ts";
+import { STATUS, ALIGNMENT, typeName, agentLabel } from "./ui.ts";
 
 export function App() {
-  const { connected, tree, repoName, agents } = useCollector();
+  const { connected, tree, repoName, agents, supervisor, interventions } = useCollector();
 
   const mapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -157,6 +157,33 @@ export function App() {
         </div>
 
         <div className="topbar-right">
+          {/* Autopilot control */}
+          {supervisor?.enabled ? (
+            <div className="autopilot">
+              <span className={"ap-dot" + (supervisor.killSwitch ? " ap-off" : supervisor.autonomous ? " ap-on" : " ap-watch")} />
+              <span className="ap-label">
+                Autopilot {supervisor.killSwitch ? "paused" : supervisor.autonomous ? "on" : "watch"}
+              </span>
+              <button
+                className="ap-toggle"
+                title={supervisor.autonomous ? "Switch to observe-only" : "Enable autonomous steering"}
+                onClick={() => setSupervisorApi({ autonomous: !supervisor.autonomous, killSwitch: false })}
+              >
+                {supervisor.autonomous ? "observe" : "autonomous"}
+              </button>
+              <button
+                className={"ap-kill" + (supervisor.killSwitch ? " armed" : "")}
+                title="Kill switch: stop all interventions"
+                onClick={() => setSupervisorApi({ killSwitch: !supervisor.killSwitch })}
+              >
+                {supervisor.killSwitch ? "resume" : "stop"}
+              </button>
+            </div>
+          ) : (
+            <span className="autopilot ap-disabled" title="Set ANTHROPIC_API_KEY to enable the AI supervisor">
+              <span className="ap-dot" /> Autopilot off
+            </span>
+          )}
           <span className={"conn " + (connected ? "conn--on" : "conn--off")}>
             <span className="conn-dot" />
             {connected ? "connected" : "disconnected"}
@@ -244,6 +271,31 @@ export function App() {
             </div>
           )}
 
+          {/* live autopilot intervention strip */}
+          {interventions.length > 0 && (
+            <div className="iv-strip">
+              {interventions.slice(-3).reverse().map((i, idx) => {
+                const a = agents.find((x) => x.agentId === i.agentId);
+                const color =
+                  i.kind === "block" ? ALIGNMENT.off_track.color
+                  : i.kind === "detected" ? ALIGNMENT.drifting.color
+                  : i.kind === "recovered" ? ALIGNMENT.on_track.color
+                  : "var(--accent)";
+                const verb =
+                  i.kind === "block" ? "blocked" : i.kind === "detected" ? "drift" : i.kind === "recovered" ? "recovered" : "steered";
+                return (
+                  <div key={idx} className="iv-toast" style={{ borderColor: color }}>
+                    <span className="iv-toast-kind" style={{ color }}>
+                      {verb}
+                    </span>
+                    <span className="iv-toast-who">{a ? typeName(a) : i.agentId.slice(0, 8)}</span>
+                    <span className="iv-toast-reason">{i.reason}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* status legend */}
           <div className="legend">
             {(["working", "waiting", "stopped", "failed"] as const).map((k) => (
@@ -262,7 +314,9 @@ export function App() {
               agent={focusAgent}
               parent={focusParent}
               now={now}
+              interventions={interventions}
               onBack={() => setFocusId(null)}
+              onSetMission={setMissionApi}
             />
           ) : (
             <div className="list-wrap">

@@ -1,5 +1,5 @@
 import type { AgentState } from "./types.ts";
-import { STATUS, agentLabel, typeName, fmtTok } from "./ui.ts";
+import { STATUS, ALIGNMENT, agentLabel, typeName, fmtTok } from "./ui.ts";
 
 export interface TrailData {
   agentId: string;
@@ -77,7 +77,12 @@ export function Pin({
   onClick: (id: string) => void;
 }) {
   const status = STATUS[agent.status];
-  const ring = focused ? "var(--accent)" : status.ring;
+  // Alignment drives the dot color when the agent is drifting/off-mission, so
+  // the map itself shows the autopilot catching problems.
+  const drift = agent.alignment && agent.alignment.state !== "on_track" && agent.alignment.state !== "unknown"
+    ? ALIGNMENT[agent.alignment.state].color
+    : null;
+  const ring = focused ? "var(--accent)" : drift ?? status.ring;
   return (
     <div
       className={"pin" + (dimmed ? " pin--dim" : "") + (focused ? " pin--focused" : "")}
@@ -90,7 +95,7 @@ export function Pin({
       }}
     >
       <div className="pin-anchor">
-        {agent.status === "working" && !dimmed && (
+        {(agent.status === "working" || drift) && !dimmed && (
           <span className="pin-pulse" style={{ background: ring }} />
         )}
         <span
@@ -104,6 +109,7 @@ export function Pin({
       <span className={"pin-label" + (focused ? " pin-label--accent" : "")}>
         {agent.isSubagent && <span className="pin-sub">↳</span>}
         {agentLabel(agent)}
+        {drift && <span className="pin-flag">⚠</span>}
       </span>
     </div>
   );

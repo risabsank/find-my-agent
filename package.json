@@ -16,6 +16,7 @@
     "build": "bun run --cwd client build",
     "server": "bun run server/src/index.ts",
     "demo": "bun run demo/simulate.ts",
+    "demo:autopilot": "bun run demo/autopilot.ts",
     "client": "bun run --cwd client dev",
     "hooks:install": "bun run hooks/install.ts",
     "dev": "echo 'Dev: `bun run server` + `bun run client` (Vite/HMR). Users: just `fma`.'"

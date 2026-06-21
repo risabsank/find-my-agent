@@ -16,3 +16,11 @@ export const STALE_SECONDS = 45;
 
 /** Seconds after stop/end before an agent is removed from the map. */
 export const REMOVE_AFTER_SECONDS = 120;
+
+// ---- Alignment Autopilot ----
+/** Model that judges whether agents are on-mission. */
+export const SUPERVISOR_MODEL = "claude-sonnet-4-6";
+/** How often the background judgment loop runs. */
+export const SUPERVISOR_INTERVAL_MS = 5000;
+/** Whether interventions act automatically by default (vs observe-only). */
+export const AUTONOMOUS_DEFAULT = true;

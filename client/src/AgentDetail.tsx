@@ -1,6 +1,8 @@
-import type { AgentState } from "./types.ts";
+import { useState } from "react";
+import type { AgentState, InterventionEntry, Mission } from "./types.ts";
 import {
   STATUS,
+  ALIGNMENT,
   agentLabel,
   typeName,
   fmtTok,
@@ -8,6 +10,64 @@ import {
   agoLabel,
   clockAt,
 } from "./ui.ts";
+
+const KIND_LABEL: Record<InterventionEntry["kind"], string> = {
+  detected: "drift detected",
+  nudge: "steered",
+  block: "blocked",
+  recovered: "recovered",
+};
+const KIND_COLOR: Record<InterventionEntry["kind"], string> = {
+  detected: ALIGNMENT.drifting.color,
+  nudge: "var(--accent)",
+  block: ALIGNMENT.off_track.color,
+  recovered: ALIGNMENT.on_track.color,
+};
+
+/** Editable mission form (goal + guardrails + off-limits paths). */
+function MissionEditor({
+  mission,
+  onSave,
+}: {
+  mission?: Mission;
+  onSave: (m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">) => void;
+}) {
+  const [goal, setGoal] = useState(mission?.goal ?? "");
+  const [guardrails, setGuardrails] = useState((mission?.guardrails ?? []).join("\n"));
+  const [denyGlobs, setDenyGlobs] = useState((mission?.denyGlobs ?? []).join(", "));
+  const lines = (s: string) => s.split(/[\n]/).map((x) => x.trim()).filter(Boolean);
+  const csv = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  return (
+    <div className="mission-form">
+      <textarea
+        className="mission-goal"
+        placeholder="Goal — what should this agent do?"
+        value={goal}
+        onChange={(e) => setGoal(e.target.value)}
+        rows={2}
+      />
+      <textarea
+        className="mission-rules"
+        placeholder="Guardrails (one per line) — e.g. don't modify tests"
+        value={guardrails}
+        onChange={(e) => setGuardrails(e.target.value)}
+        rows={2}
+      />
+      <input
+        className="mission-deny"
+        placeholder="Off-limits paths (comma) — e.g. auth/**, .env"
+        value={denyGlobs}
+        onChange={(e) => setDenyGlobs(e.target.value)}
+      />
+      <button
+        className="mission-save"
+        onClick={() => onSave({ goal: goal.trim(), guardrails: lines(guardrails), denyGlobs: csv(denyGlobs) })}
+      >
+        Set mission
+      </button>
+    </div>
+  );
+}
 
 function StatBlock({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -34,14 +94,21 @@ export function AgentDetail({
   agent,
   parent,
   now,
+  interventions,
   onBack,
+  onSetMission,
 }: {
   agent: AgentState;
   parent: AgentState | null;
   now: number;
+  interventions: InterventionEntry[];
   onBack: () => void;
+  onSetMission: (agentId: string, m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">) => void;
 }) {
   const status = STATUS[agent.status];
+  const align = agent.alignment;
+  const alignMeta = align ? ALIGNMENT[align.state] : null;
+  const log = interventions.filter((i) => i.agentId === agent.agentId).slice(-12).reverse();
   const step = lifecycleStep(agent.status);
   const pct = Math.round((step / PHASES.length) * 100);
   const tk = agent.tokens;
@@ -73,6 +140,46 @@ export function AgentDetail({
         <div className="detail-parent">
           subagent of <span className="mono">{typeName(parent)} {agentLabel(parent)}</span>
         </div>
+      )}
+
+      {align && align.state !== "unknown" && (
+        <section className="d-sec">
+          <div className="d-sec-head">
+            <h4>Alignment</h4>
+            <span className="align-badge" style={{ color: alignMeta!.color, borderColor: alignMeta!.color }}>
+              ● {alignMeta!.label}
+            </span>
+          </div>
+          {align.reason && <p className="d-task">{align.reason}</p>}
+          {align.correction && align.state !== "on_track" && (
+            <p className="align-correction">↪ {align.correction}</p>
+          )}
+        </section>
+      )}
+
+      <section className="d-sec">
+        <div className="d-sec-head">
+          <h4>Mission</h4>
+          <span className="estimate-tag">{agent.mission?.source ?? "unset"}</span>
+        </div>
+        <MissionEditor mission={agent.mission} onSave={(m) => onSetMission(agent.agentId, m)} />
+      </section>
+
+      {log.length > 0 && (
+        <section className="d-sec">
+          <h4>Interventions</h4>
+          <ul className="feed intervene">
+            {log.map((i, idx) => (
+              <li key={idx}>
+                <span className="iv-kind" style={{ color: KIND_COLOR[i.kind] }}>
+                  {KIND_LABEL[i.kind]}
+                </span>
+                <span className="iv-reason">{i.reason}</span>
+                <span className="iv-ago mono">{agoLabel(now - i.ts)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <section className="d-sec">

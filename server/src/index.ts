@@ -6,6 +6,7 @@ import { AgentStore } from "./store.ts";
 import { Broadcaster } from "./ws.ts";
 import { normalize, type RawHook } from "./normalize.ts";
 import { scanTree } from "./tree.ts";
+import { createSupervisor, type Decision } from "./supervisor.ts";
 
 // ---- Mapped repo resolution -------------------------------------------------
 // The repo whose file tree becomes the map. Override with TARGET_REPO; defaults
@@ -48,6 +49,30 @@ function getTree(): TreeNode | null {
 
 const store = new AgentStore();
 const bus = new Broadcaster();
+const supervisor = createSupervisor(store, bus);
+supervisor.start();
+
+/** Map a supervisor Decision to the Claude Code hook response JSON. */
+function buildHookResponse(decision: Decision, ev: { event: string }): unknown {
+  if (decision.kind === "deny") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: decision.reason,
+      },
+    };
+  }
+  if (decision.kind === "inject") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: ev.event,
+        additionalContext: decision.context,
+      },
+    };
+  }
+  return {}; // allow
+}
 
 // ---- Live tree updates ------------------------------------------------------
 // Re-scan the repo (debounced) and push the new tree to clients when it changes.
@@ -128,7 +153,12 @@ const server = Bun.serve({
 
       const ev = normalize(raw, targetRepo);
       const agent = store.apply(ev);
+      supervisor.noteEvent(ev);
       bus.broadcast({ type: "event", event: ev, agent });
+
+      // Autopilot: decide instantly (cached verdict, no LLM in this path) whether
+      // to allow / deny / inject a correction. Fail-open via {} on allow.
+      const decision = supervisor.decide(ev);
 
       // Re-scan the file map when the repo may have changed: a file-mutating
       // tool finished, a path we've never seen showed up, or the session
@@ -144,7 +174,8 @@ const server = Bun.serve({
       ) {
         scheduleRescan();
       }
-      return json({ ok: true }); // respond immediately — never blocks the agent
+      // The response steers the agent (deny/inject) or is empty (allow).
+      return json(buildHookResponse(decision, ev));
     }
 
     if (url.pathname === "/api/tree") {
@@ -153,6 +184,36 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/agents") {
       return json(store.snapshot());
+    }
+
+    // Autopilot: set/replace an agent's mission.
+    if (url.pathname === "/api/mission" && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as {
+        agentId?: string;
+        goal?: string;
+        guardrails?: string[];
+        denyGlobs?: string[];
+      };
+      if (!body.agentId) return json({ ok: false, error: "agentId required" }, 400);
+      supervisor.setMission(body.agentId, {
+        goal: body.goal ?? "",
+        guardrails: body.guardrails ?? [],
+        denyGlobs: body.denyGlobs ?? [],
+        source: "manual",
+      });
+      return json({ ok: true });
+    }
+
+    // Autopilot: toggle autonomy / kill-switch, or read status.
+    if (url.pathname === "/api/supervisor") {
+      if (req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as {
+          autonomous?: boolean;
+          killSwitch?: boolean;
+        };
+        return json(supervisor.setAutonomy(body));
+      }
+      return json(supervisor.status());
     }
 
     if (url.pathname === "/api/health") {
@@ -199,6 +260,8 @@ const server = Bun.serve({
         agents: store.snapshot(),
         tree,
         repoName: tree?.name ?? "repo",
+        supervisor: supervisor.status(),
+        interventions: supervisor.recentInterventions(),
       });
     },
     message() {

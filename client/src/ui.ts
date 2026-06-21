@@ -1,4 +1,4 @@
-import type { AgentState, AgentStatus } from "./types.ts";
+import type { AgentState, AgentStatus, Alignment } from "./types.ts";
 
 /** Status → ring color + label, matching the design's near-monochrome palette. */
 export const STATUS: Record<AgentStatus, { ring: string; label: string }> = {
@@ -6,6 +6,14 @@ export const STATUS: Record<AgentStatus, { ring: string; label: string }> = {
   waiting: { ring: "oklch(0.78 0.13 75)", label: "waiting" },
   stopped: { ring: "oklch(0.6 0.01 250)", label: "stopped" },
   failed: { ring: "oklch(0.64 0.16 25)", label: "failed" },
+};
+
+/** Alignment state → color + label (autopilot). */
+export const ALIGNMENT: Record<Alignment["state"], { color: string; label: string }> = {
+  on_track: { color: "oklch(0.74 0.12 150)", label: "on mission" },
+  drifting: { color: "oklch(0.80 0.14 75)", label: "drifting" },
+  off_track: { color: "oklch(0.64 0.19 25)", label: "off mission" },
+  unknown: { color: "oklch(0.6 0.01 250)", label: "—" },
 };
 
 export function shortId(id: string): string {

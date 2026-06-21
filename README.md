@@ -182,6 +182,30 @@ Both sessions report to the same collector. Because file paths are normalized
 relative to each agent's own `cwd`, both worktrees land on the **same** tree —
 so you see two independent dots roaming one map.
 
+## Alignment Autopilot (AI supervisor)
+
+Beyond watching, the dashboard can **keep agents on mission**. Give an agent a
+mission (auto-derived from its prompt, or set in the detail panel with
+guardrails + off-limits paths); a background **Claude Sonnet 4.6** loop judges
+whether it's on-track, and the collector's hook responses **autonomously steer it
+back** — injecting a correction or **denying** off-mission/destructive tool calls
+(with a reason the agent reads and acts on). Dots turn amber/red on drift, a live
+strip shows each intervention, and a topbar control gives an autonomous/observe
+toggle + kill-switch.
+
+Requires `ANTHROPIC_API_KEY` (without it the supervisor is disabled and the app
+still runs). Try it:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... fma      # or: ... bun run server
+bun run demo:autopilot                # agent drifts into an off-limits zone →
+                                      # blocked/steered → recovers, live on the map
+```
+
+How it stays fast: judgment (the LLM) runs in the background; enforcement (the
+hook response) reads only the cached verdict, so it never stalls the agent. See
+[context.md](context.md) → "Alignment Autopilot" for the architecture.
+
 ## Token / cost (stubbed for now)
 
 `AgentState` carries a `TokenUsage` field, and the UI renders it — but v1 values

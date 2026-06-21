@@ -108,6 +108,10 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
 - `server/src/tokens.ts` — `TokenSource` interface + `StubTokenSource`
   (placeholder numbers, `isStub:true`). **OTEL adapter is the intended real
   source** (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, metric `claude_code.token.usage`).
+- `server/src/supervisor.ts` — **Alignment Autopilot** (see its section). `Supervisor`
+  interface + `ClaudeSupervisor` (background Sonnet 4.6 judgment loop → verdicts;
+  queues steers / deny rules; `decide(ev)` is the instant enforcement used by
+  `/events`) + `DisabledSupervisor` (no API key). Mirrors the `tokens.ts` pattern.
 - `server/src/ws.ts` — `Broadcaster` (set of WS clients + broadcast).
 - `client/src/useCollector.ts` — WS hook; reduces snapshot/event/tree/agentRemoved
   into state; auto-reconnects. Re-applies the tree on `tree` messages (live map).
@@ -153,6 +157,51 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   node_modules/build off the map). Note: `demo/scratch/` is intentionally NOT
   gitignored, or the demo's created files would be hidden from the map.
 
+## Alignment Autopilot (closed control loop — the flagship AI feature)
+Turns the tool from observability into a controller: it knows each agent's
+**mission**, an AI continuously judges whether the agent is on-track, and when it
+drifts the system **autonomously steers it back** — nudging (inject context) or
+blocking off-mission/destructive tool calls — all shown live on the map.
+
+**The key enabler:** Claude Code hooks are bidirectional. The collector's HTTP
+response to `/events` can **deny a tool** (`hookSpecificOutput.permissionDecision:
+"deny"` + `permissionDecisionReason`) or **inject context**
+(`hookSpecificOutput.additionalContext`). `buildHookResponse()` in
+`server/src/index.ts` builds these. (Confirm exact field names against current
+Claude Code hook docs if behavior seems off — this is the one spot that depends on
+the response schema.)
+
+**Architecture — judgment is decoupled from enforcement:**
+- *Async judgment* (`ClaudeSupervisor.tick`/`judge`, every `SUPERVISOR_INTERVAL_MS`
+  = 5s): sends each active+changed agent's mission + `recentActivity` to
+  `SUPERVISOR_MODEL` (`claude-sonnet-4-6`) → `Alignment` verdict
+  (`on_track|drifting|off_track` + reason + correction). Writes it to the agent,
+  broadcasts, logs `detected`/`recovered` interventions, queues a steer.
+- *Instant enforcement* (`supervisor.decide(ev)` called from `/events`): reads only
+  cached state — **no LLM in the request path**, so the agent never stalls.
+  Deterministic guardrail: `PreToolUse` editing a `mission.denyGlobs` path → deny.
+  Otherwise inject any queued correction. Fail-open (`{}`) on anything else.
+
+**Mission** = `{goal, guardrails[], denyGlobs[], source}` — auto-derived from the
+agent's `UserPromptSubmit` prompt, and/or set in the dashboard detail panel
+(`POST /api/mission`). **Controls:** `POST /api/supervisor {autonomous?, killSwitch?}`
+(topbar Autopilot toggle + kill-switch). **Requires `ANTHROPIC_API_KEY`** — without
+it `DisabledSupervisor` no-ops and the topbar shows "Autopilot off".
+
+**Data model** (`shared/types.ts`): `Mission`, `Alignment`, `InterventionEntry`,
+`SupervisorStatus`; `AgentState.mission`/`.alignment`; `ServerMessage` adds
+`intervention` + `supervisorStatus`; snapshot carries `supervisor` + `interventions`.
+
+**UI:** pin color/⚠ flag by alignment (`client/src/Pins.tsx`); detail panel has a
+Mission editor, an Alignment section (state + reason + correction), and an
+Interventions timeline (`AgentDetail.tsx`); live intervention strip + Autopilot
+control in `App.tsx`; `ALIGNMENT` palette in `ui.ts`.
+
+**Demo:** `bun run demo:autopilot` (`demo/autopilot.ts`) — sets a mission with an
+off-limits zone, drives an agent that drifts into it (instant guardrail **block** +
+AI judges **off_track**), then course-corrects (**recovered**). Needs the collector
+running with `ANTHROPIC_API_KEY`.
+
 ## Open questions / known gaps
 - **Subagent identity is unconfirmed.** Docs confirm `SubagentStart`/`SubagentStop`
   exist but don't document an explicit subagent-id field. `normalize.ts` probes a
@@ -163,12 +212,9 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   update would not commit reliably in the preview test harness (traced
   thoroughly; server + diff logic were correct). Removed rather than ship an
   unverified cosmetic. If re-adding, verify in a real browser, not the preview.
-- **AI "Fleet Observer" is planned but NOT built** (deferred). Plan:
-  `~/.claude/plans/if-i-wanted-an-smooth-wave.md` once held it; the agreed design
-  was a read-only observer (continuous + on-demand "Diagnose") using
-  `claude-sonnet-4-6`, requiring `ANTHROPIC_API_KEY`, mirroring the `TokenSource`
-  stub pattern. If implementing: use `@anthropic-ai/sdk`, structured outputs for
-  the periodic pass, a read-only tool-use loop for diagnosis.
+- The earlier "Fleet Observer" idea evolved into the **Alignment Autopilot**
+  (built — see its own section above): not just observing, but a closed loop that
+  judges mission-alignment and autonomously steers/blocks.
 
 ## Migrating the coding session to Codex (or another agent)
 This project's *content* is provider-neutral, but two things are Claude-specific:

@@ -10,4 +10,8 @@ export type {
   SnapshotMessage,
   EventMessage,
   AgentRemovedMessage,
+  Mission,
+  Alignment,
+  InterventionEntry,
+  SupervisorStatus,
 } from "../../shared/types.ts";

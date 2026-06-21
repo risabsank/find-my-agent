@@ -1,15 +1,47 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentState, ServerMessage, TreeNode } from "./types.ts";
+import type {
+  AgentState,
+  ServerMessage,
+  TreeNode,
+  InterventionEntry,
+  SupervisorStatus,
+  Mission,
+} from "./types.ts";
 
 // Connect to the collector on the same origin that served this page, so the app
 // works on any host/port (the collector serves the UI and the WS together).
 const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+
+// Control helpers (client → collector) over the same origin.
+export async function setMissionApi(
+  agentId: string,
+  m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">,
+): Promise<void> {
+  await fetch("/api/mission", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId, ...m }),
+  }).catch(() => {});
+}
+
+export async function setSupervisorApi(opts: {
+  autonomous?: boolean;
+  killSwitch?: boolean;
+}): Promise<void> {
+  await fetch("/api/supervisor", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  }).catch(() => {});
+}
 
 export interface CollectorState {
   connected: boolean;
   tree: TreeNode | null;
   repoName: string;
   agents: AgentState[];
+  supervisor: SupervisorStatus | null;
+  interventions: InterventionEntry[];
 }
 
 /**
@@ -22,6 +54,8 @@ export function useCollector(): CollectorState {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [repoName, setRepoName] = useState("repo");
   const [agents, setAgents] = useState<AgentState[]>([]);
+  const [supervisor, setSupervisor] = useState<SupervisorStatus | null>(null);
+  const [interventions, setInterventions] = useState<InterventionEntry[]>([]);
   const agentsRef = useRef<Map<string, AgentState>>(new Map());
 
   useEffect(() => {
@@ -49,6 +83,16 @@ export function useCollector(): CollectorState {
             else setRepoName(msg.repoName);
             agentsRef.current = new Map(msg.agents.map((a) => [a.agentId, a]));
             flush();
+            setSupervisor(msg.supervisor);
+            setInterventions(msg.interventions);
+            break;
+          }
+          case "intervention": {
+            setInterventions((cur) => [...cur, msg.entry].slice(-60));
+            break;
+          }
+          case "supervisorStatus": {
+            setSupervisor(msg.supervisor);
             break;
           }
           case "event": {
@@ -85,5 +129,5 @@ export function useCollector(): CollectorState {
     };
   }, []);
 
-  return { connected, tree, repoName, agents };
+  return { connected, tree, repoName, agents, supervisor, interventions };
 }

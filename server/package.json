@@ -5,5 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0"
   }
 }

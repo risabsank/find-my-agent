@@ -131,6 +131,20 @@ export class AgentStore {
     return this.agents.get(agentId);
   }
 
+  /** Autopilot: set/merge an agent's mission. Returns the agent if present. */
+  setMission(agentId: string, mission: AgentState["mission"]): AgentState | undefined {
+    const a = this.agents.get(agentId);
+    if (a) a.mission = mission;
+    return a;
+  }
+
+  /** Autopilot: record the latest alignment verdict. Returns the agent. */
+  setAlignment(agentId: string, alignment: AgentState["alignment"]): AgentState | undefined {
+    const a = this.agents.get(agentId);
+    if (a) a.alignment = alignment;
+    return a;
+  }
+
   snapshot(): AgentState[] {
     // Refresh stub token usage so a late-joining client sees current values.
     for (const a of this.agents.values()) {
