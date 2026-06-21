@@ -291,20 +291,47 @@ body{
 .iv-reason{ flex:1; color:var(--text-2); line-height:1.35; }
 .iv-ago{ flex-shrink:0; color:var(--text-3); font-size:10.5px; }
 
-/* ===== LIVE INTERVENTION STRIP (over the map) ===== */
-.iv-strip{ position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:8;
-  display:flex; flex-direction:column; gap:7px; width:min(560px, 70%); pointer-events:none; }
-.iv-toast{ display:flex; align-items:baseline; gap:9px; font-size:12px;
-  background:oklch(0.2 0.007 255 / .92); border:1px solid var(--border); border-left-width:3px;
-  border-radius:9px; padding:7px 9px 7px 11px; backdrop-filter:blur(8px); box-shadow:0 8px 24px oklch(0 0 0 / .45);
-  pointer-events:auto; }
-.iv-toast-kind{ font-weight:700; text-transform:uppercase; font-size:10px; letter-spacing:.05em; flex-shrink:0; }
-.iv-toast-who{ font-weight:600; color:var(--text); flex-shrink:0; }
-.iv-toast-reason{ color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.iv-close{ margin-left:auto; flex-shrink:0; width:19px; height:19px; display:grid; place-items:center;
-  cursor:pointer; color:var(--text-3); background:transparent; border:none; border-radius:5px;
-  font-size:16px; line-height:1; padding:0; }
-.iv-close:hover{ color:var(--text); background:var(--bg-3); }
+/* ===== ALERT CIRCLES (over the map) ===== */
+.alert-cluster{ position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:9;
+  display:flex; flex-direction:column; align-items:center; gap:9px; }
+.alert-circles{ display:flex; gap:11px; }
+.alert-circle{ width:36px; height:36px; border-radius:50%; border:2px solid oklch(0.16 0.006 250);
+  cursor:pointer; font-family:var(--mono); font-weight:700; font-size:14px; color:#fff;
+  display:grid; place-items:center; box-shadow:0 4px 16px oklch(0 0 0 / .45); transition:transform .12s; }
+.alert-circle:hover{ transform:scale(1.08); }
+.alert-circle.open{ outline:2px solid var(--text); outline-offset:2px; }
+.alert-circle.alert-error{ background:oklch(0.55 0.20 25); animation:alertpulse-r 2s ease-in-out infinite; }
+.alert-circle.alert-warn{ background:oklch(0.78 0.15 80); color:oklch(0.25 0.05 80);
+  animation:alertpulse-y 2s ease-in-out infinite; }
+@keyframes alertpulse-r{ 0%,100%{ box-shadow:0 4px 16px oklch(0 0 0 / .45), 0 0 0 0 oklch(0.55 0.20 25 / .5); }
+  50%{ box-shadow:0 4px 16px oklch(0 0 0 / .45), 0 0 0 7px oklch(0.55 0.20 25 / 0); } }
+@keyframes alertpulse-y{ 0%,100%{ box-shadow:0 4px 16px oklch(0 0 0 / .45), 0 0 0 0 oklch(0.78 0.15 80 / .5); }
+  50%{ box-shadow:0 4px 16px oklch(0 0 0 / .45), 0 0 0 7px oklch(0.78 0.15 80 / 0); } }
+
+.alert-panel{ width:min(420px, 74vw); background:oklch(0.2 0.007 255 / .97); border:1px solid var(--border);
+  border-radius:12px; padding:7px; backdrop-filter:blur(10px); box-shadow:0 14px 38px oklch(0 0 0 / .55); }
+.alert-panel-head{ display:flex; align-items:center; justify-content:space-between; padding:4px 8px 7px; }
+.alert-panel-title{ font-size:12.5px; font-weight:600; }
+.alert-clear{ background:none; border:none; color:var(--text-3); font-size:11.5px; cursor:pointer; font-family:var(--sans); }
+.alert-clear:hover{ color:var(--text); }
+.alert-list{ list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto;
+  display:flex; flex-direction:column; gap:1px; }
+.alert-row{ width:100%; display:flex; align-items:center; gap:9px; text-align:left; cursor:pointer;
+  background:none; border:none; padding:7px 8px; border-radius:8px; color:var(--text-2);
+  font-family:var(--sans); font-size:12px; }
+.alert-row:hover{ background:var(--bg-3); color:var(--text); }
+.alert-row-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.alert-row-who{ font-weight:600; color:var(--text); flex-shrink:0; max-width:90px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.alert-row-reason{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--mono); font-size:11px; }
+.alert-row-ago{ flex-shrink:0; color:var(--text-3); font-size:10.5px; }
+
+/* highlight an intervention jumped-to from an alert */
+.feed.intervene .iv--highlight{ animation:ivhighlight 2.6s ease-out; border-radius:6px; }
+@keyframes ivhighlight{
+  0%{ background:color-mix(in oklch, var(--accent) 32%, transparent); }
+  100%{ background:transparent; }
+}
 .pin-flag{ margin-left:5px; }
 
 @media (prefers-reduced-motion: reduce){

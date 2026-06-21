@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AgentState, InterventionEntry, Mission } from "./types.ts";
 import {
   STATUS,
@@ -116,6 +116,7 @@ export function AgentDetail({
   parent,
   now,
   interventions,
+  jumpTs,
   onBack,
   onSetMission,
 }: {
@@ -123,13 +124,23 @@ export function AgentDetail({
   parent: AgentState | null;
   now: number;
   interventions: InterventionEntry[];
+  /** When set, scroll to + highlight the intervention with this timestamp. */
+  jumpTs?: number;
   onBack: () => void;
   onSetMission: (agentId: string, m: Pick<Mission, "goal" | "allowedGlobs" | "guardrails" | "denyGlobs">) => void;
 }) {
   const status = STATUS[agent.status];
   const align = agent.alignment;
   const alignMeta = align ? ALIGNMENT[align.state] : null;
-  const log = interventions.filter((i) => i.agentId === agent.agentId).slice(-12).reverse();
+  // Keep enough history to reach a jumped-to intervention.
+  const log = interventions.filter((i) => i.agentId === agent.agentId).slice(-40).reverse();
+  const jumpRef = useRef<HTMLLIElement | null>(null);
+
+  useEffect(() => {
+    if (jumpTs && jumpRef.current) {
+      jumpRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [jumpTs, agent.agentId]);
   const step = lifecycleStep(agent.status);
   const pct = Math.round((step / PHASES.length) * 100);
   const tk = agent.tokens;
@@ -210,15 +221,18 @@ export function AgentDetail({
         <section className="d-sec">
           <h4>Interventions</h4>
           <ul className="feed intervene">
-            {log.map((i, idx) => (
-              <li key={idx}>
-                <span className="iv-kind" style={{ color: KIND_COLOR[i.kind] }}>
-                  {KIND_LABEL[i.kind]}
-                </span>
-                <span className="iv-reason">{i.reason}</span>
-                <span className="iv-ago mono">{agoLabel(now - i.ts)}</span>
-              </li>
-            ))}
+            {log.map((i, idx) => {
+              const isJump = jumpTs !== undefined && i.ts === jumpTs;
+              return (
+                <li key={idx} ref={isJump ? jumpRef : undefined} className={isJump ? "iv--highlight" : undefined}>
+                  <span className="iv-kind" style={{ color: KIND_COLOR[i.kind] }}>
+                    {KIND_LABEL[i.kind]}
+                  </span>
+                  <span className="iv-reason">{i.reason}</span>
+                  <span className="iv-ago mono">{agoLabel(now - i.ts)}</span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

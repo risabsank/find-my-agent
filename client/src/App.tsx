@@ -16,7 +16,14 @@ import {
 import { Pin, Trails, Tooltip, type TrailData } from "./Pins.tsx";
 import { AgentListPanel } from "./AgentList.tsx";
 import { AgentDetail } from "./AgentDetail.tsx";
-import { STATUS, ALIGNMENT, typeName, agentLabel } from "./ui.ts";
+import { STATUS, ALIGNMENT, typeName, agentLabel, agoLabel } from "./ui.ts";
+
+/** Bucket an intervention into the red (error) or yellow (warning) circle. */
+function ivSeverity(kind: string): "error" | "warning" | null {
+  if (kind === "block") return "error"; // hard deny
+  if (kind === "detected" || kind === "nudge" || kind === "boundary") return "warning";
+  return null; // recovered / other → not an alert
+}
 
 function globToRegExp(glob: string): RegExp {
   const esc = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
@@ -63,6 +70,8 @@ export function App() {
   const [dismissedInterventions, setDismissedInterventions] = useState<Set<string>>(
     () => new Set(),
   );
+  const [openAlert, setOpenAlert] = useState<"error" | "warning" | null>(null);
+  const [jumpTo, setJumpTo] = useState<{ agentId: string; ts: number } | null>(null);
   const dragMoved = useRef(false);
   const suppressClick = useRef(false);
   const dropTargetRef = useRef<Rect | null>(null);
@@ -185,6 +194,39 @@ export function App() {
   const visibleInterventions = useMemo(() => {
     return interventions.filter((i) => !dismissedInterventions.has(interventionKey(i)));
   }, [dismissedInterventions, interventions]);
+
+  // Bucket alerts into the two circles (red errors / yellow warnings).
+  const { errorIvs, warnIvs } = useMemo(() => {
+    const e: typeof visibleInterventions = [];
+    const w: typeof visibleInterventions = [];
+    for (const i of visibleInterventions) {
+      const sev = ivSeverity(i.kind);
+      if (sev === "error") e.push(i);
+      else if (sev === "warning") w.push(i);
+    }
+    return { errorIvs: e, warnIvs: w };
+  }, [visibleInterventions]);
+  const alertList = openAlert === "error" ? errorIvs : openAlert === "warning" ? warnIvs : [];
+
+  // Close the expanded panel when its category empties (e.g. cleared/dismissed).
+  useEffect(() => {
+    if (openAlert === "error" && errorIvs.length === 0) setOpenAlert(null);
+    if (openAlert === "warning" && warnIvs.length === 0) setOpenAlert(null);
+  }, [openAlert, errorIvs.length, warnIvs.length]);
+
+  const clearAlerts = (list: typeof visibleInterventions) => {
+    setDismissedInterventions((cur) => {
+      const n = new Set(cur);
+      for (const i of list) n.add(interventionKey(i));
+      return n;
+    });
+    setOpenAlert(null);
+  };
+  const selectAlert = (i: { agentId: string; ts: number }) => {
+    setFocusId(i.agentId);
+    setJumpTo({ agentId: i.agentId, ts: i.ts });
+    setOpenAlert(null);
+  };
 
   const territoryOutlines = useMemo(() => {
     const out: { rect: Rect; color: string; label: string; active?: boolean }[] = [];
@@ -425,40 +467,64 @@ export function App() {
             </div>
           )}
 
-          {/* live autopilot intervention strip */}
-          {visibleInterventions.length > 0 && (
-            <div className="iv-strip">
-              {visibleInterventions.slice(-2).reverse().map((i) => {
-                const a = agents.find((x) => x.agentId === i.agentId);
-                const color =
-                  i.kind === "block" ? ALIGNMENT.off_track.color
-                  : i.kind === "detected" || i.kind === "boundary" ? ALIGNMENT.drifting.color
-                  : i.kind === "recovered" ? ALIGNMENT.on_track.color
-                  : "var(--accent)";
-                const verb =
-                  i.kind === "block" ? "blocked" : i.kind === "boundary" ? "territory" : i.kind === "detected" ? "drift" : i.kind === "recovered" ? "recovered" : "steered";
-                const key = interventionKey(i);
-                return (
-                  <div key={key} className="iv-toast" style={{ borderColor: color }}>
-                    <span className="iv-toast-kind" style={{ color }}>
-                      {verb}
+          {/* alert circles: red = errors (blocks/territory), yellow = warnings (drift/steer) */}
+          {(errorIvs.length > 0 || warnIvs.length > 0) && (
+            <div className="alert-cluster" onClick={(e) => e.stopPropagation()}>
+              <div className="alert-circles">
+                {errorIvs.length > 0 && (
+                  <button
+                    className={"alert-circle alert-error" + (openAlert === "error" ? " open" : "")}
+                    title={`${errorIvs.length} error${errorIvs.length === 1 ? "" : "s"} — click to view`}
+                    onClick={() => setOpenAlert((o) => (o === "error" ? null : "error"))}
+                  >
+                    {errorIvs.length}
+                  </button>
+                )}
+                {warnIvs.length > 0 && (
+                  <button
+                    className={"alert-circle alert-warn" + (openAlert === "warning" ? " open" : "")}
+                    title={`${warnIvs.length} warning${warnIvs.length === 1 ? "" : "s"} — click to view`}
+                    onClick={() => setOpenAlert((o) => (o === "warning" ? null : "warning"))}
+                  >
+                    {warnIvs.length}
+                  </button>
+                )}
+              </div>
+
+              {openAlert && (
+                <div className="alert-panel">
+                  <div className="alert-panel-head">
+                    <span className="alert-panel-title">
+                      {openAlert === "error" ? "Errors" : "Warnings"} ({alertList.length})
                     </span>
-                    <span className="iv-toast-who">{a ? typeName(a) : i.agentId.slice(0, 8)}</span>
-                    <span className="iv-toast-reason">{i.filePath ?? i.reason}</span>
-                    <button
-                      className="iv-close"
-                      title="Dismiss warning"
-                      aria-label="Dismiss warning"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDismissedInterventions((cur) => new Set(cur).add(key));
-                      }}
-                    >
-                      ×
+                    <button className="alert-clear" onClick={() => clearAlerts(alertList)}>
+                      clear all
                     </button>
                   </div>
-                );
-              })}
+                  <ul className="alert-list">
+                    {alertList
+                      .slice()
+                      .reverse()
+                      .map((i) => {
+                        const a = agents.find((x) => x.agentId === i.agentId);
+                        const color =
+                          openAlert === "error" ? ALIGNMENT.off_track.color : ALIGNMENT.drifting.color;
+                        return (
+                          <li key={interventionKey(i)}>
+                            <button className="alert-row" onClick={() => selectAlert(i)}>
+                              <span className="alert-row-dot" style={{ background: color }} />
+                              <span className="alert-row-who">
+                                {a ? typeName(a) : i.agentId.slice(0, 8)}
+                              </span>
+                              <span className="alert-row-reason">{i.filePath ?? i.reason}</span>
+                              <span className="alert-row-ago mono">{agoLabel(now - i.ts)}</span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -490,6 +556,7 @@ export function App() {
               parent={focusParent}
               now={now}
               interventions={interventions}
+              jumpTs={jumpTo && jumpTo.agentId === focusAgent.agentId ? jumpTo.ts : undefined}
               onBack={() => setFocusId(null)}
               onSetMission={setMissionApi}
             />

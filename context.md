@@ -209,8 +209,12 @@ deterministic deny-glob blocking still work; the topbar shows "Autopilot off".
 territory; focused map overlays allowed/risky/forbidden/touched files
 (`TreeMap.tsx` + `App.tsx`); detail panel has a Mission editor, an Alignment
 section (state + reason + correction), and an Interventions timeline
-(`AgentDetail.tsx`); live intervention strip + Autopilot control in `App.tsx`;
-`ALIGNMENT` palette in `ui.ts`.
+(`AgentDetail.tsx`). Over the map, interventions surface as two **alert circles** —
+red = errors (`block`), yellow = warnings (`detected`/`nudge`/`boundary`); clicking
+a circle expands a list, clicking a row focuses that agent and scrolls to +
+highlights the matching intervention (`jumpTs` → `iv--highlight`), and `clear all`
+dismisses a category. Classifier `ivSeverity` + `openAlert`/`jumpTo` state in
+`App.tsx`. Autopilot control also in `App.tsx`; `ALIGNMENT` palette in `ui.ts`.
 
 ## Redis Agent Memory (durable state + semantic recall)
 Optional Redis layer that makes the project durable and gives the Autopilot
