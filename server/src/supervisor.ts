@@ -54,13 +54,42 @@ function globToRegExp(glob: string): RegExp {
 function matchGlob(path: string, pattern: string): boolean {
   if (!pattern) return false;
   const p = pattern.replace(/\/$/, "");
+  if (p === "**" || p === "*") return true;
   if (globToRegExp(p).test(path)) return true;
   return path === p || path.startsWith(p + "/"); // bare prefix: "auth" → "auth/x"
+}
+
+const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+const BOUNDARY_COOLDOWN_MS = 8000;
+
+function normalizeMission(mission: Mission, source: Mission["source"] = "manual"): Mission {
+  return {
+    goal: mission.goal ?? "",
+    allowedGlobs: mission.allowedGlobs ?? [],
+    guardrails: mission.guardrails ?? [],
+    denyGlobs: mission.denyGlobs ?? [],
+    source,
+  };
+}
+
+function outsideTerritory(path: string, mission: Mission): boolean {
+  return mission.allowedGlobs.length > 0 && !mission.allowedGlobs.some((g) => matchGlob(path, g));
 }
 
 // ---- no-API-key fallback ----------------------------------------------------
 export class DisabledSupervisor implements Supervisor {
   readonly enabled = false;
+
+  private missions = new Map<string, Mission>();
+  private manual = new Set<string>();
+  private interventions: InterventionEntry[] = [];
+  private boundaryCooldown = new Map<string, number>();
+
+  constructor(
+    private store: AgentStore,
+    private bus: Broadcaster,
+  ) {}
+
   start(): void {}
   stop(): void {}
   status(): SupervisorStatus {
@@ -76,16 +105,112 @@ export class DisabledSupervisor implements Supervisor {
   setAutonomy(): SupervisorStatus {
     return this.status();
   }
-  setMission(): void {}
+  setMission(agentId: string, mission: Mission): void {
+    const m = normalizeMission(mission);
+    this.missions.set(agentId, m);
+    this.manual.add(agentId);
+    this.store.setMission(agentId, m);
+    persistMission(agentId, m);
+    this.broadcastAgent(agentId, "Mission");
+  }
   setRepo(): void {}
-  loadMission(): void {}
-  loadInterventions(): void {}
-  noteEvent(): void {}
-  decide(): Decision {
+  loadMission(agentId: string, mission: Mission): void {
+    const m = normalizeMission(mission, mission.source ?? "manual");
+    this.missions.set(agentId, m);
+    if (m.source === "manual") this.manual.add(agentId);
+    this.store.setMission(agentId, m);
+  }
+  loadInterventions(entries: InterventionEntry[]): void {
+    this.interventions = entries.slice(-200);
+  }
+  noteEvent(ev: NormalizedEvent): void {
+    if (ev.event === "UserPromptSubmit" && !this.manual.has(ev.agentId)) {
+      const raw = ev.raw as { prompt?: string } | null;
+      const goal = (raw?.prompt ?? ev.taskLabel ?? "").trim();
+      if (goal) {
+        const existing = this.missions.get(ev.agentId);
+        const m = normalizeMission(
+          {
+            goal,
+            allowedGlobs: existing?.allowedGlobs ?? [],
+            guardrails: existing?.guardrails ?? [],
+            denyGlobs: existing?.denyGlobs ?? [],
+            source: "prompt",
+          },
+          "prompt",
+        );
+        this.missions.set(ev.agentId, m);
+        this.store.setMission(ev.agentId, m);
+      }
+    }
+  }
+  decide(ev: NormalizedEvent): Decision {
+    const mission = this.missions.get(ev.agentId);
+    if (!mission) return { kind: "allow" };
+    this.flagBoundary(ev, mission);
+    if (
+      ev.event === "PreToolUse" &&
+      ev.filePath &&
+      ev.tool &&
+      EDIT_TOOLS.has(ev.tool) &&
+      mission.denyGlobs.some((g) => matchGlob(ev.filePath!, g))
+    ) {
+      const reason = `Off-mission: ${ev.filePath} is excluded by a mission guardrail${
+        mission.goal ? ` (mission: ${mission.goal})` : ""
+      }. Do not modify it — return to the mission scope.`;
+      this.log({ agentId: ev.agentId, kind: "block", reason, tool: ev.tool, filePath: ev.filePath, ts: Date.now() });
+      return { kind: "deny", reason };
+    }
     return { kind: "allow" };
   }
   recentInterventions(): InterventionEntry[] {
-    return [];
+    return this.interventions.slice(-50);
+  }
+
+  private flagBoundary(ev: NormalizedEvent, mission: Mission): void {
+    if (!ev.filePath || !outsideTerritory(ev.filePath, mission)) return;
+    const key = `${ev.agentId}:${ev.tool ?? ev.event}:${ev.filePath}`;
+    const now = Date.now();
+    if ((this.boundaryCooldown.get(key) ?? 0) + BOUNDARY_COOLDOWN_MS > now) return;
+    this.boundaryCooldown.set(key, now);
+    const territory = mission.allowedGlobs.join(", ");
+    const reason = `${ev.filePath} is outside assigned territory${territory ? ` (${territory})` : ""}.`;
+    this.log({ agentId: ev.agentId, kind: "boundary", reason, tool: ev.tool ?? undefined, filePath: ev.filePath, ts: now });
+    this.store.setAlignment(ev.agentId, {
+      state: "drifting",
+      reason,
+      correction: `Return to assigned territory: ${territory}.`,
+      severity: "med",
+      at: now,
+    });
+    this.broadcastAgent(ev.agentId, "Boundary");
+  }
+
+  private log(entry: InterventionEntry): void {
+    this.interventions.push(entry);
+    if (this.interventions.length > 200) this.interventions.shift();
+    persistIntervention(entry);
+    this.bus.broadcast({ type: "intervention", entry });
+  }
+
+  private broadcastAgent(agentId: string, event: string): void {
+    const agent = this.store.get(agentId);
+    if (!agent) return;
+    this.bus.broadcast({
+      type: "event",
+      event: {
+        agentId: agent.agentId,
+        sessionId: agent.sessionId,
+        parentId: agent.parentId,
+        isSubagent: agent.isSubagent,
+        event,
+        tool: agent.currentTool,
+        filePath: agent.currentFile,
+        ts: Date.now(),
+        raw: null,
+      },
+      agent,
+    });
   }
 }
 
@@ -144,6 +269,7 @@ export class ClaudeSupervisor implements Supervisor {
   private prevState = new Map<string, Alignment["state"]>();
   private lastJudged = new Map<string, number>(); // agentId → eventCount at last judgment
   private interventions: InterventionEntry[] = [];
+  private boundaryCooldown = new Map<string, number>();
   private judging = false;
 
   constructor(
@@ -180,12 +306,7 @@ export class ClaudeSupervisor implements Supervisor {
   }
 
   setMission(agentId: string, mission: Mission): void {
-    const m: Mission = {
-      goal: mission.goal ?? "",
-      guardrails: mission.guardrails ?? [],
-      denyGlobs: mission.denyGlobs ?? [],
-      source: "manual",
-    };
+    const m = normalizeMission(mission);
     this.missions.set(agentId, m);
     this.manual.add(agentId);
     this.store.setMission(agentId, m);
@@ -199,9 +320,10 @@ export class ClaudeSupervisor implements Supervisor {
   }
 
   loadMission(agentId: string, mission: Mission): void {
-    this.missions.set(agentId, mission);
-    if (mission.source === "manual") this.manual.add(agentId);
-    this.store.setMission(agentId, mission);
+    const m = normalizeMission(mission, mission.source ?? "manual");
+    this.missions.set(agentId, m);
+    if (m.source === "manual") this.manual.add(agentId);
+    this.store.setMission(agentId, m);
   }
 
   loadInterventions(entries: InterventionEntry[]): void {
@@ -215,12 +337,16 @@ export class ClaudeSupervisor implements Supervisor {
       const goal = (raw?.prompt ?? ev.taskLabel ?? "").trim();
       if (goal) {
         const existing = this.missions.get(ev.agentId);
-        const m: Mission = {
-          goal,
-          guardrails: existing?.guardrails ?? [],
-          denyGlobs: existing?.denyGlobs ?? [],
-          source: "prompt",
-        };
+        const m = normalizeMission(
+          {
+            goal,
+            allowedGlobs: existing?.allowedGlobs ?? [],
+            guardrails: existing?.guardrails ?? [],
+            denyGlobs: existing?.denyGlobs ?? [],
+            source: "prompt",
+          },
+          "prompt",
+        );
         this.missions.set(ev.agentId, m);
         this.store.setMission(ev.agentId, m);
       }
@@ -228,18 +354,25 @@ export class ClaudeSupervisor implements Supervisor {
   }
 
   decide(ev: NormalizedEvent): Decision {
-    if (this.killSwitch || !this.autonomous) return { kind: "allow" };
     const mission = this.missions.get(ev.agentId);
+    if (mission) this.flagBoundary(ev, mission);
 
     if (ev.event === "PreToolUse") {
       // Hard guardrail: deny edits to off-limits paths (deterministic, instant).
-      if (mission && ev.filePath && mission.denyGlobs.some((g) => matchGlob(ev.filePath!, g))) {
+      if (
+        mission &&
+        ev.filePath &&
+        ev.tool &&
+        EDIT_TOOLS.has(ev.tool) &&
+        mission.denyGlobs.some((g) => matchGlob(ev.filePath!, g))
+      ) {
         const reason = `Off-mission: ${ev.filePath} is excluded by a mission guardrail${
           mission.goal ? ` (mission: ${mission.goal})` : ""
         }. Do not modify it — return to the mission scope.`;
         this.log({ agentId: ev.agentId, kind: "block", reason, tool: ev.tool ?? undefined, filePath: ev.filePath ?? undefined, ts: Date.now() });
         return { kind: "deny", reason };
       }
+      if (this.killSwitch || !this.autonomous) return { kind: "allow" };
       // Otherwise, nudge with any queued correction.
       const steer = this.pendingSteer.get(ev.agentId);
       if (steer) {
@@ -250,9 +383,12 @@ export class ClaudeSupervisor implements Supervisor {
       return { kind: "allow" };
     }
 
+    if (this.killSwitch || !this.autonomous) return { kind: "allow" };
+
     if (ev.event === "UserPromptSubmit") {
       const parts: string[] = [];
       if (mission?.goal) parts.push(`Mission: ${mission.goal}`);
+      if (mission?.allowedGlobs.length) parts.push(`Assigned territory: ${mission.allowedGlobs.join(", ")}`);
       if (mission?.guardrails.length) parts.push(`Guardrails: ${mission.guardrails.join("; ")}`);
       if (mission?.denyGlobs.length) parts.push(`Do not modify: ${mission.denyGlobs.join(", ")}`);
       const steer = this.pendingSteer.get(ev.agentId);
@@ -304,6 +440,7 @@ export class ClaudeSupervisor implements Supervisor {
     );
     const user = [
       `MISSION GOAL: ${mission.goal}`,
+      mission.allowedGlobs.length ? `ASSIGNED TERRITORY: ${mission.allowedGlobs.join(", ")}` : "",
       mission.guardrails.length ? `GUARDRAILS: ${mission.guardrails.join("; ")}` : "",
       mission.denyGlobs.length ? `OFF-LIMITS PATHS: ${mission.denyGlobs.join(", ")}` : "",
       `CURRENT FILE: ${agent.currentFile ?? "(none)"}`,
@@ -381,6 +518,25 @@ export class ClaudeSupervisor implements Supervisor {
     this.bus.broadcast({ type: "intervention", entry });
   }
 
+  private flagBoundary(ev: NormalizedEvent, mission: Mission): void {
+    if (!ev.filePath || !outsideTerritory(ev.filePath, mission)) return;
+    const key = `${ev.agentId}:${ev.tool ?? ev.event}:${ev.filePath}`;
+    const now = Date.now();
+    if ((this.boundaryCooldown.get(key) ?? 0) + BOUNDARY_COOLDOWN_MS > now) return;
+    this.boundaryCooldown.set(key, now);
+    const territory = mission.allowedGlobs.join(", ");
+    const reason = `${ev.filePath} is outside assigned territory${territory ? ` (${territory})` : ""}.`;
+    this.log({ agentId: ev.agentId, kind: "boundary", reason, tool: ev.tool ?? undefined, filePath: ev.filePath, ts: now });
+    this.store.setAlignment(ev.agentId, {
+      state: "drifting",
+      reason,
+      correction: `Return to assigned territory: ${territory}.`,
+      severity: "med",
+      at: now,
+    });
+    this.broadcastAgent(ev.agentId, "Boundary");
+  }
+
   /** Push the agent's updated state (incl. mission/alignment) to clients. */
   private broadcastAgent(agentId: string, event: string): void {
     const agent = this.store.get(agentId);
@@ -406,5 +562,5 @@ export class ClaudeSupervisor implements Supervisor {
 export function createSupervisor(store: AgentStore, bus: Broadcaster): Supervisor {
   return process.env.ANTHROPIC_API_KEY
     ? new ClaudeSupervisor(store, bus)
-    : new DisabledSupervisor();
+    : new DisabledSupervisor(store, bus);
 }

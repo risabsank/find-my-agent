@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AgentState, InterventionEntry, Mission } from "./types.ts";
 import {
   STATUS,
@@ -15,12 +15,14 @@ const KIND_LABEL: Record<InterventionEntry["kind"], string> = {
   detected: "drift detected",
   nudge: "steered",
   block: "blocked",
+  boundary: "territory breach",
   recovered: "recovered",
 };
 const KIND_COLOR: Record<InterventionEntry["kind"], string> = {
   detected: ALIGNMENT.drifting.color,
   nudge: "var(--accent)",
   block: ALIGNMENT.off_track.color,
+  boundary: ALIGNMENT.drifting.color,
   recovered: ALIGNMENT.on_track.color,
 };
 
@@ -30,13 +32,21 @@ function MissionEditor({
   onSave,
 }: {
   mission?: Mission;
-  onSave: (m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">) => void;
+  onSave: (m: Pick<Mission, "goal" | "allowedGlobs" | "guardrails" | "denyGlobs">) => void;
 }) {
   const [goal, setGoal] = useState(mission?.goal ?? "");
+  const [allowedGlobs, setAllowedGlobs] = useState((mission?.allowedGlobs ?? []).join(", "));
   const [guardrails, setGuardrails] = useState((mission?.guardrails ?? []).join("\n"));
   const [denyGlobs, setDenyGlobs] = useState((mission?.denyGlobs ?? []).join(", "));
   const lines = (s: string) => s.split(/[\n]/).map((x) => x.trim()).filter(Boolean);
   const csv = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+
+  useEffect(() => {
+    setGoal(mission?.goal ?? "");
+    setAllowedGlobs((mission?.allowedGlobs ?? []).join(", "));
+    setGuardrails((mission?.guardrails ?? []).join("\n"));
+    setDenyGlobs((mission?.denyGlobs ?? []).join(", "));
+  }, [mission]);
   return (
     <div className="mission-form">
       <textarea
@@ -54,6 +64,12 @@ function MissionEditor({
         rows={2}
       />
       <input
+        className="mission-allowed"
+        placeholder="Assigned territory — e.g. client/src/**"
+        value={allowedGlobs}
+        onChange={(e) => setAllowedGlobs(e.target.value)}
+      />
+      <input
         className="mission-deny"
         placeholder="Off-limits paths (comma) — e.g. auth/**, .env"
         value={denyGlobs}
@@ -61,7 +77,7 @@ function MissionEditor({
       />
       <button
         className="mission-save"
-        onClick={() => onSave({ goal: goal.trim(), guardrails: lines(guardrails), denyGlobs: csv(denyGlobs) })}
+        onClick={() => onSave({ goal: goal.trim(), allowedGlobs: csv(allowedGlobs), guardrails: lines(guardrails), denyGlobs: csv(denyGlobs) })}
       >
         Set mission
       </button>
@@ -89,6 +105,11 @@ function lifecycleStep(status: AgentState["status"]): number {
   return 1;
 }
 
+function shortGlobs(globs: string[] | undefined): string {
+  if (!globs || globs.length === 0) return "unassigned";
+  return globs.join(", ");
+}
+
 /** Detail panel shown when an agent is focused. */
 export function AgentDetail({
   agent,
@@ -103,7 +124,7 @@ export function AgentDetail({
   now: number;
   interventions: InterventionEntry[];
   onBack: () => void;
-  onSetMission: (agentId: string, m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">) => void;
+  onSetMission: (agentId: string, m: Pick<Mission, "goal" | "allowedGlobs" | "guardrails" | "denyGlobs">) => void;
 }) {
   const status = STATUS[agent.status];
   const align = agent.alignment;
@@ -141,6 +162,18 @@ export function AgentDetail({
           subagent of <span className="mono">{typeName(parent)} {agentLabel(parent)}</span>
         </div>
       )}
+
+      <section className="d-sec d-sec--primary">
+        <h4>Current Work</h4>
+        <p className="d-task">{agent.taskLabel}</p>
+        <div className="d-now mono">
+          <span className="d-now-tool">{agent.currentTool ?? "—"}</span>
+          <span className="d-now-file">{agent.currentFile ?? "thinking…"}</span>
+        </div>
+        <div className="mission-summary mono">
+          territory · {shortGlobs(agent.mission?.allowedGlobs)}
+        </div>
+      </section>
 
       {align && align.state !== "unknown" && (
         <section className="d-sec">
@@ -185,84 +218,79 @@ export function AgentDetail({
         </section>
       )}
 
-      <section className="d-sec">
-        <h4>Working on</h4>
-        <p className="d-task">{agent.taskLabel}</p>
-      </section>
+      <details className="diagnostics">
+        <summary>Diagnostics</summary>
 
-      <section className="d-sec">
-        <div className="d-sec-head">
-          <h4>Progress</h4>
-          <span className="estimate-tag">estimated</span>
-        </div>
-        <div className="steps">
-          {PHASES.map((s, i) => (
-            <div
-              key={s}
-              className={
-                "step" + (i < step ? " step--done" : "") + (i === step - 1 ? " step--cur" : "")
-              }
-            >
-              <span
-                className="step-tick"
-                style={i < step ? { background: "var(--accent)" } : undefined}
-              />
-              <span className="step-name">{s}</span>
-            </div>
-          ))}
-        </div>
-        <div className="pbar">
-          <span className="pbar-fill" style={{ width: pct + "%", background: "var(--accent)" }} />
-        </div>
-        <div className="d-now mono">
-          <span className="d-now-tool">{agent.currentTool ?? "—"}</span>
-          <span className="d-now-file">{agent.currentFile ?? "thinking…"}</span>
-        </div>
-      </section>
+        <section className="d-sec">
+          <div className="d-sec-head">
+            <h4>Lifecycle</h4>
+            <span className="estimate-tag">estimated</span>
+          </div>
+          <div className="steps">
+            {PHASES.map((s, i) => (
+              <div
+                key={s}
+                className={
+                  "step" + (i < step ? " step--done" : "") + (i === step - 1 ? " step--cur" : "")
+                }
+              >
+                <span
+                  className="step-tick"
+                  style={i < step ? { background: "var(--accent)" } : undefined}
+                />
+                <span className="step-name">{s}</span>
+              </div>
+            ))}
+          </div>
+          <div className="pbar">
+            <span className="pbar-fill" style={{ width: pct + "%", background: "var(--accent)" }} />
+          </div>
+        </section>
 
-      <section className="d-sec">
-        <h4>
-          Token usage <span className="stub">stub</span>
-        </h4>
-        <div className="tok-bar">
-          <span className="tok-in" style={{ width: inPct + "%" }} />
-          <span className="tok-out" style={{ width: 100 - inPct + "%" }} />
-        </div>
-        <div className="tok-legend mono">
-          <span>
-            <i className="sw sw-in" />in {fmtTok(tk.inputTokens)}
-          </span>
-          <span>
-            <i className="sw sw-out" />out {fmtTok(tk.outputTokens)}
-          </span>
-        </div>
-        <div className="stat-row">
-          <StatBlock label="total tokens" value={tk.totalTokens.toLocaleString()} />
-          <StatBlock label="est. cost" value={"$" + tk.costUsd.toFixed(4)} sub="stub" />
-        </div>
-      </section>
+        <section className="d-sec">
+          <h4>
+            Token usage <span className="stub">stub</span>
+          </h4>
+          <div className="tok-bar">
+            <span className="tok-in" style={{ width: inPct + "%" }} />
+            <span className="tok-out" style={{ width: 100 - inPct + "%" }} />
+          </div>
+          <div className="tok-legend mono">
+            <span>
+              <i className="sw sw-in" />in {fmtTok(tk.inputTokens)}
+            </span>
+            <span>
+              <i className="sw sw-out" />out {fmtTok(tk.outputTokens)}
+            </span>
+          </div>
+          <div className="stat-row">
+            <StatBlock label="total tokens" value={tk.totalTokens.toLocaleString()} />
+            <StatBlock label="est. cost" value={"$" + tk.costUsd.toFixed(4)} sub="stub" />
+          </div>
+        </section>
 
-      <section className="d-sec">
-        <div className="stat-row">
-          <StatBlock label="elapsed" value={elapsed(now - agent.startedAt)} />
-          <StatBlock label="started" value={clockAt(agent.startedAt)} />
-          <StatBlock label="actions" value={String(agent.eventCount)} />
-        </div>
-      </section>
+        <section className="d-sec">
+          <div className="stat-row">
+            <StatBlock label="elapsed" value={elapsed(now - agent.startedAt)} />
+            <StatBlock label="started" value={clockAt(agent.startedAt)} />
+            <StatBlock label="actions" value={String(agent.eventCount)} />
+          </div>
+        </section>
 
-      <section className="d-sec">
-        <h4>Recent activity</h4>
-        {activity.length === 0 && <p className="d-task">No activity yet.</p>}
-        <ul className="activity">
-          {activity.map((ev, i) => (
-            <li key={i} className="act">
-              <span className="act-tool">{ev.tool ?? ev.event}</span>
-              <span className="act-file mono">{ev.filePath ?? "—"}</span>
-              <span className="act-ago mono">{agoLabel(now - ev.ts)}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+        <section className="d-sec">
+          <h4>Recent activity</h4>
+          {activity.length === 0 && <p className="d-task">No activity yet.</p>}
+          <ul className="activity">
+            {activity.map((ev, i) => (
+              <li key={i} className="act">
+                <span className="act-tool">{ev.tool ?? ev.event}</span>
+                <span className="act-file mono">{ev.filePath ?? "—"}</span>
+                <span className="act-ago mono">{agoLabel(now - ev.ts)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </details>
     </div>
   );
 }

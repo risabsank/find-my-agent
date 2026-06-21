@@ -1,5 +1,11 @@
 import type { AgentState } from "./types.ts";
-import { STATUS, agentLabel, typeName, fmtTok, elapsed } from "./ui.ts";
+import { STATUS, agentLabel, typeName, elapsed } from "./ui.ts";
+
+function territoryLabel(agent: AgentState): string {
+  const globs = agent.mission?.allowedGlobs ?? [];
+  if (globs.length === 0) return "unassigned";
+  return globs[0].replace(/\/\*\*$/, "").replace(/^\*\*$/, "repo");
+}
 
 function AgentRow({
   agent,
@@ -42,10 +48,8 @@ function AgentRow({
         </span>
         <span className="row-elapsed">{elapsed(now - agent.startedAt)}</span>
       </div>
-      <div className="row-tokens mono">
-        <span>{fmtTok(agent.tokens.totalTokens)} tok</span>
-        <span className="row-cost">${agent.tokens.costUsd.toFixed(4)}</span>
-        {agent.tokens.isStub && <span className="stub">stub</span>}
+      <div className="row-territory mono" title={territoryLabel(agent)}>
+        territory · {territoryLabel(agent)}
       </div>
     </li>
   );

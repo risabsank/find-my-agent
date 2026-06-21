@@ -1,3 +1,4 @@
+import type { PointerEvent } from "react";
 import type { AgentState } from "./types.ts";
 import { STATUS, ALIGNMENT, agentLabel, typeName, fmtTok } from "./ui.ts";
 
@@ -65,6 +66,7 @@ export function Pin({
   onEnter,
   onLeave,
   onClick,
+  onDragStart,
 }: {
   agent: AgentState;
   x: number;
@@ -75,6 +77,7 @@ export function Pin({
   onEnter: (id: string) => void;
   onLeave: () => void;
   onClick: (id: string) => void;
+  onDragStart: (id: string, e: PointerEvent<HTMLDivElement>) => void;
 }) {
   const status = STATUS[agent.status];
   // Alignment drives the dot color when the agent is drifting/off-mission, so
@@ -89,6 +92,7 @@ export function Pin({
       style={{ left: x, top: y, transform: `translate(-50%,-50%) scale(${invK})` }}
       onMouseEnter={() => onEnter(agent.agentId)}
       onMouseLeave={onLeave}
+      onPointerDown={(e) => onDragStart(agent.agentId, e)}
       onClick={(e) => {
         e.stopPropagation();
         onClick(agent.agentId);

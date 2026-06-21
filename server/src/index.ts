@@ -220,12 +220,14 @@ const server = Bun.serve({
       const body = (await req.json().catch(() => ({}))) as {
         agentId?: string;
         goal?: string;
+        allowedGlobs?: string[];
         guardrails?: string[];
         denyGlobs?: string[];
       };
       if (!body.agentId) return json({ ok: false, error: "agentId required" }, 400);
       supervisor.setMission(body.agentId, {
         goal: body.goal ?? "",
+        allowedGlobs: body.allowedGlobs ?? [],
         guardrails: body.guardrails ?? [],
         denyGlobs: body.denyGlobs ?? [],
         source: "manual",
@@ -277,7 +279,7 @@ const server = Bun.serve({
       return new Response(Bun.file(indexPath)); // SPA fallback
     }
 
-    return new Response("Find My Agent collector. See /api/health", {
+    return new Response("CartoAI collector. See /api/health", {
       status: 404,
       headers: CORS,
     });
@@ -334,7 +336,7 @@ setInterval(() => {
   }
 }, 5000);
 
-console.log(`\n  Find My Agent collector running`);
+console.log(`\n  CartoAI collector running`);
 console.log(`  HTTP    http://localhost:${server.port}`);
 console.log(`  Events  POST http://localhost:${server.port}/events`);
 console.log(`  WS      ws://localhost:${server.port}/ws`);

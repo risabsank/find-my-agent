@@ -15,7 +15,7 @@ const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.ho
 // Control helpers (client → collector) over the same origin.
 export async function setMissionApi(
   agentId: string,
-  m: Pick<Mission, "goal" | "guardrails" | "denyGlobs">,
+  m: Pick<Mission, "goal" | "allowedGlobs" | "guardrails" | "denyGlobs">,
 ): Promise<void> {
   await fetch("/api/mission", {
     method: "POST",

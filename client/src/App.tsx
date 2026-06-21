@@ -1,16 +1,52 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useCollector, setMissionApi, setSupervisorApi } from "./useCollector.ts";
 import {
   useTreemapLayout,
   Territory,
+  TerritoryOutlines,
+  DropTargetHighlight,
   resolveCell,
   regionRect,
   cellCenter,
+  containingFolder,
+  type FileOverlay,
+  type Rect,
 } from "./TreeMap.tsx";
 import { Pin, Trails, Tooltip, type TrailData } from "./Pins.tsx";
 import { AgentListPanel } from "./AgentList.tsx";
 import { AgentDetail } from "./AgentDetail.tsx";
 import { STATUS, ALIGNMENT, typeName, agentLabel } from "./ui.ts";
+
+function globToRegExp(glob: string): RegExp {
+  const esc = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const re = esc
+    .replace(/\*\*/g, "::DSTAR::")
+    .replace(/\*/g, "[^/]*")
+    .replace(/::DSTAR::/g, ".*");
+  return new RegExp("^" + re + "$");
+}
+
+function matchesGlob(path: string, glob: string): boolean {
+  const p = glob.replace(/\/$/, "");
+  if (p === "**" || p === "*") return true;
+  if (globToRegExp(p).test(path)) return true;
+  return path === p || path.startsWith(p + "/");
+}
+
+function matchesAny(path: string, globs: string[]): boolean {
+  return globs.some((g) => matchesGlob(path, g));
+}
+
+function interventionKey(i: {
+  agentId: string;
+  kind: string;
+  reason: string;
+  tool?: string;
+  filePath?: string;
+  ts: number;
+}): string {
+  return [i.agentId, i.kind, i.tool ?? "", i.filePath ?? "", i.reason, i.ts].join("|");
+}
 
 export function App() {
   const { connected, tree, repoName, agents, supervisor, interventions } = useCollector();
@@ -21,6 +57,14 @@ export function App() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<Rect | null>(null);
+  const [dismissedInterventions, setDismissedInterventions] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const dragMoved = useRef(false);
+  const suppressClick = useRef(false);
+  const dropTargetRef = useRef<Rect | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -115,6 +159,10 @@ export function App() {
   });
   const layerTransform = `translate(${transform.tx}px, ${transform.ty}px) scale(${transform.k})`;
 
+  useEffect(() => {
+    dropTargetRef.current = dropTarget;
+  }, [dropTarget]);
+
   const activeFiles = useMemo(() => {
     const s = new Set<string>();
     for (const a of agents) if (a.currentFile && a.status !== "stopped") s.add(a.currentFile);
@@ -124,6 +172,107 @@ export function App() {
   const hovered = hoveredId ? agents.find((a) => a.agentId === hoveredId) ?? null : null;
   const hoveredPos = hovered ? positions.get(hovered.agentId) : null;
   const hoveredScreen = hoveredPos ? screen(hoveredPos) : null;
+
+  useEffect(() => {
+    setDismissedInterventions((cur) => {
+      const live = new Set(interventions.map(interventionKey));
+      const next = new Set([...cur].filter((k) => live.has(k)));
+      return next.size === cur.size ? cur : next;
+    });
+  }, [interventions]);
+
+  const visibleInterventions = useMemo(() => {
+    return interventions.filter((i) => !dismissedInterventions.has(interventionKey(i)));
+  }, [dismissedInterventions, interventions]);
+
+  const territoryOutlines = useMemo(() => {
+    const out: { rect: Rect; color: string; label: string; active?: boolean }[] = [];
+    for (const a of agents) {
+      const globs = a.mission?.allowedGlobs ?? [];
+      for (const glob of globs) {
+        const path = glob === "**" || glob === "*" ? "" : glob.replace(/\/\*\*$/, "").replace(/\/\*$/, "").replace(/\/$/, "");
+        const rect = layout.byPath.get(path);
+        if (rect) out.push({ rect, color: a.color, label: agentLabel(a), active: a.agentId === focusId });
+      }
+    }
+    return out;
+  }, [agents, focusId, layout.byPath]);
+
+  const focusOverlays = useMemo(() => {
+    if (!focusAgent?.mission) return undefined;
+    const touched = new Set(
+      focusAgent.recentActivity
+        .map((e) => e.filePath)
+        .filter((p): p is string => Boolean(p)),
+    );
+    const out = new Map<string, FileOverlay>();
+    for (const r of layout.rects) {
+      if (r.type !== "file") continue;
+      const overlay: FileOverlay = {};
+      if (matchesAny(r.path, focusAgent.mission.denyGlobs ?? [])) {
+        overlay.policy = "forbidden";
+      } else if ((focusAgent.mission.allowedGlobs ?? []).length > 0) {
+        overlay.policy = matchesAny(r.path, focusAgent.mission.allowedGlobs) ? "allowed" : "risky";
+      }
+      if (touched.has(r.path)) overlay.touched = true;
+      if (overlay.policy || overlay.touched) out.set(r.path, overlay);
+    }
+    return out;
+  }, [focusAgent, layout.rects]);
+
+  const mapPoint = (clientX: number, clientY: number) => {
+    const el = mapRef.current;
+    if (!el) return null;
+    const box = el.getBoundingClientRect();
+    return {
+      x: (clientX - box.left - transform.tx) / transform.k,
+      y: (clientY - box.top - transform.ty) / transform.k,
+    };
+  };
+
+  const startPinDrag = (agentId: string, e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragMoved.current = false;
+    suppressClick.current = false;
+    setDraggingId(agentId);
+    const p = mapPoint(e.clientX, e.clientY);
+    setDropTarget(p ? containingFolder(layout, p.x, p.y) : null);
+  };
+
+  useEffect(() => {
+    if (!draggingId) return;
+    const onMove = (e: PointerEvent) => {
+      dragMoved.current = true;
+      const p = mapPoint(e.clientX, e.clientY);
+      setDropTarget(p ? containingFolder(layout, p.x, p.y) : null);
+    };
+    const onUp = () => {
+      const target = dropTargetRef.current;
+      const agent = agents.find((a) => a.agentId === draggingId);
+      if (agent && target && dragMoved.current) {
+        const allowedGlobs = [target.path ? `${target.path}/**` : "**"];
+        void setMissionApi(agent.agentId, {
+          goal: agent.mission?.goal ?? agent.taskLabel ?? "",
+          allowedGlobs,
+          guardrails: agent.mission?.guardrails ?? [],
+          denyGlobs: agent.mission?.denyGlobs ?? [],
+        });
+        suppressClick.current = true;
+      }
+      setDraggingId(null);
+      setDropTarget(null);
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 0);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [agents, draggingId, layout, transform.k, transform.tx, transform.ty]);
 
   return (
     <div className={"app" + (focusId ? " app--focus" : "")}>
@@ -139,7 +288,7 @@ export function App() {
             />
             <circle cx="12" cy="9" r="2.4" fill="var(--accent)" />
           </svg>
-          <span className="brand-name">Find My Agent</span>
+          <span className="brand-name">CartoAI</span>
         </div>
         <div className="repo mono">
           <span className="repo-glyph" />
@@ -157,27 +306,12 @@ export function App() {
         </div>
 
         <div className="topbar-right">
-          {/* Persistence (Redis) indicator */}
-          {supervisor?.persisted && (
-            <span className="persist" title={`Redis persistence on · memory: ${supervisor.memory}`}>
-              <span className="persist-dot" /> Redis
-              {supervisor.memory !== "off" && <span className="persist-mem">{supervisor.memory}</span>}
-            </span>
-          )}
-          {/* Autopilot control */}
           {supervisor?.enabled ? (
             <div className="autopilot">
               <span className={"ap-dot" + (supervisor.killSwitch ? " ap-off" : supervisor.autonomous ? " ap-on" : " ap-watch")} />
               <span className="ap-label">
-                Autopilot {supervisor.killSwitch ? "paused" : supervisor.autonomous ? "on" : "watch"}
+                Mission Control {supervisor.killSwitch ? "paused" : supervisor.autonomous ? "on" : "watch"}
               </span>
-              <button
-                className="ap-toggle"
-                title={supervisor.autonomous ? "Switch to observe-only" : "Enable autonomous steering"}
-                onClick={() => setSupervisorApi({ autonomous: !supervisor.autonomous, killSwitch: false })}
-              >
-                {supervisor.autonomous ? "observe" : "autonomous"}
-              </button>
               <button
                 className={"ap-kill" + (supervisor.killSwitch ? " armed" : "")}
                 title="Kill switch: stop all interventions"
@@ -187,8 +321,8 @@ export function App() {
               </button>
             </div>
           ) : (
-            <span className="autopilot ap-disabled" title="Set ANTHROPIC_API_KEY to enable the AI supervisor">
-              <span className="ap-dot" /> Autopilot off
+            <span className="autopilot ap-disabled" title="AI judgment is off; local territories and forbidden-path guardrails are active">
+              <span className="ap-dot ap-watch" /> Local guardrails
             </span>
           )}
           <span className={"conn " + (connected ? "conn--on" : "conn--off")}>
@@ -217,7 +351,10 @@ export function App() {
                 focusRegion={region ? region.path : null}
                 focusFile={focusAgent ? focusAgent.currentFile : null}
                 activeFiles={activeFiles}
+                overlays={focusOverlays}
               />
+              <TerritoryOutlines outlines={territoryOutlines} />
+              <DropTargetHighlight rect={draggingId ? dropTarget : null} />
               <Trails trails={trails} focusId={focusId} focusRegion={region ? region.path : null} />
             </g>
           </svg>
@@ -241,7 +378,10 @@ export function App() {
                     dimmed={dimmed}
                     onEnter={setHoveredId}
                     onLeave={() => setHoveredId(null)}
-                    onClick={setFocusId}
+                    onClick={(id) => {
+                      if (!suppressClick.current) setFocusId(id);
+                    }}
+                    onDragStart={startPinDrag}
                   />
                 );
               })}
@@ -279,24 +419,36 @@ export function App() {
           )}
 
           {/* live autopilot intervention strip */}
-          {interventions.length > 0 && (
+          {visibleInterventions.length > 0 && (
             <div className="iv-strip">
-              {interventions.slice(-3).reverse().map((i, idx) => {
+              {visibleInterventions.slice(-2).reverse().map((i) => {
                 const a = agents.find((x) => x.agentId === i.agentId);
                 const color =
                   i.kind === "block" ? ALIGNMENT.off_track.color
-                  : i.kind === "detected" ? ALIGNMENT.drifting.color
+                  : i.kind === "detected" || i.kind === "boundary" ? ALIGNMENT.drifting.color
                   : i.kind === "recovered" ? ALIGNMENT.on_track.color
                   : "var(--accent)";
                 const verb =
-                  i.kind === "block" ? "blocked" : i.kind === "detected" ? "drift" : i.kind === "recovered" ? "recovered" : "steered";
+                  i.kind === "block" ? "blocked" : i.kind === "boundary" ? "territory" : i.kind === "detected" ? "drift" : i.kind === "recovered" ? "recovered" : "steered";
+                const key = interventionKey(i);
                 return (
-                  <div key={idx} className="iv-toast" style={{ borderColor: color }}>
+                  <div key={key} className="iv-toast" style={{ borderColor: color }}>
                     <span className="iv-toast-kind" style={{ color }}>
                       {verb}
                     </span>
                     <span className="iv-toast-who">{a ? typeName(a) : i.agentId.slice(0, 8)}</span>
-                    <span className="iv-toast-reason">{i.reason}</span>
+                    <span className="iv-toast-reason">{i.filePath ?? i.reason}</span>
+                    <button
+                      className="iv-close"
+                      title="Dismiss warning"
+                      aria-label="Dismiss warning"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDismissedInterventions((cur) => new Set(cur).add(key));
+                      }}
+                    >
+                      ×
+                    </button>
                   </div>
                 );
               })}
@@ -305,12 +457,21 @@ export function App() {
 
           {/* status legend */}
           <div className="legend">
-            {(["working", "waiting", "stopped", "failed"] as const).map((k) => (
-              <span key={k} className="legend-item">
-                <span className="legend-dot" style={{ background: STATUS[k].ring }} />
-                {STATUS[k].label}
-              </span>
-            ))}
+            {focusAgent?.mission ? (
+              <>
+                <span className="legend-item"><span className="legend-dot legend-allowed" />allowed</span>
+                <span className="legend-item"><span className="legend-dot legend-risky" />risky</span>
+                <span className="legend-item"><span className="legend-dot legend-forbidden" />forbidden</span>
+                <span className="legend-item"><span className="legend-dot legend-touched" />touched</span>
+              </>
+            ) : (
+              (["working", "waiting", "stopped", "failed"] as const).map((k) => (
+                <span key={k} className="legend-item">
+                  <span className="legend-dot" style={{ background: STATUS[k].ring }} />
+                  {STATUS[k].label}
+                </span>
+              ))
+            )}
           </div>
         </div>
 

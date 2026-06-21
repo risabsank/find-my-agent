@@ -61,6 +61,7 @@ async function main() {
     body: JSON.stringify({
       agentId: SESSION,
       goal: "Add input validation to the signup form in client/src.",
+      allowedGlobs: ["client/src/**"],
       guardrails: ["Stay within client/src", "Do not modify tests"],
       denyGlobs: ["server/src/**"],
     }),

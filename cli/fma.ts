@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// fma — Find My Agent launcher. Run it inside the repo you're coding in.
+// fma — CartoAI launcher. Run it inside the repo you're coding in.
 //
 //   fma                 watch the current directory; serve UI; open the browser
 //   fma watch [path]    watch a specific repo
@@ -98,7 +98,7 @@ async function watch(flags: string[]): Promise<void> {
   process.env.TARGET_REPO = repo;
   process.env.COLLECTOR_PORT = String(p);
 
-  console.log(`\n  Find My Agent`);
+  console.log(`\n  CartoAI`);
   console.log(`  Watching ${repo}`);
   console.log(`  Open     ${url}\n`);
 
@@ -152,7 +152,7 @@ function doUninstall(flags: string[]): void {
 }
 
 function help(): void {
-  console.log(`Find My Agent — live map of your Claude Code agents
+  console.log(`CartoAI — live map of your Claude Code agents
 
 Usage:
   fma                       watch the current directory and open the dashboard

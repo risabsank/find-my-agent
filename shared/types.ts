@@ -35,6 +35,8 @@ export interface ActivityEntry {
 export interface Mission {
   /** Plain-language objective (auto-derived from the prompt, or set in the UI). */
   goal: string;
+  /** Glob-ish path patterns the agent is expected to stay inside. */
+  allowedGlobs: string[];
   /** Human-readable rules, e.g. "don't modify tests". */
   guardrails: string[];
   /** Glob-ish path patterns the agent must NOT touch, e.g. "auth/**". */
@@ -57,7 +59,7 @@ export interface Alignment {
 /** One supervisor action, for the live intervention timeline. */
 export interface InterventionEntry {
   agentId: string;
-  kind: "detected" | "nudge" | "block" | "recovered";
+  kind: "detected" | "nudge" | "block" | "boundary" | "recovered";
   reason: string;
   tool?: string;
   filePath?: string;

@@ -16,6 +16,8 @@
     "build": "bun run --cwd client build",
     "server": "bun run server/src/index.ts",
     "demo": "bun run demo/simulate.ts",
+    "demo:mission": "bun run demo/mission-control.ts",
+    "demo:swarm": "bun run demo/swarm.ts",
     "demo:autopilot": "bun run demo/autopilot.ts",
     "client": "bun run --cwd client dev",
     "hooks:install": "bun run hooks/install.ts",

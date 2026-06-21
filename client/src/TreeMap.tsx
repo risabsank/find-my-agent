@@ -25,6 +25,11 @@ export interface Layout {
   byPath: Map<string, Rect>;
 }
 
+export interface FileOverlay {
+  policy?: "allowed" | "risky" | "forbidden";
+  touched?: boolean;
+}
+
 /** Squarified treemap layout for the file tree at the given pixel size. */
 export function useTreemapLayout(
   tree: TreeNode | null,
@@ -101,6 +106,19 @@ export function cellCenter(r: Rect): { x: number; y: number } {
   return { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 };
 }
 
+export function containingFolder(
+  layout: Layout,
+  x: number,
+  y: number,
+): Rect | null {
+  let best: Rect | null = null;
+  for (const r of layout.rects) {
+    if (x < r.x0 || x > r.x1 || y < r.y0 || y > r.y1) continue;
+    if (r.type === "dir" && (!best || r.depth > best.depth)) best = r;
+  }
+  return best ?? layout.byPath.get("") ?? null;
+}
+
 function inRegion(path: string, region: string | null): boolean {
   if (!region) return true;
   return path === region || path.startsWith(region + "/");
@@ -120,6 +138,18 @@ const DIR_FILL = [
 const FILE_FILL = "oklch(0.255 0.007 250)";
 const FILE_FILL_HI = "oklch(0.305 0.008 250)";
 
+const OVERLAY_FILL: Record<NonNullable<FileOverlay["policy"]>, string> = {
+  allowed: "color-mix(in oklch, oklch(0.74 0.12 150) 20%, oklch(0.255 0.007 250))",
+  risky: "color-mix(in oklch, oklch(0.80 0.14 75) 22%, oklch(0.255 0.007 250))",
+  forbidden: "color-mix(in oklch, oklch(0.64 0.19 25) 26%, oklch(0.255 0.007 250))",
+};
+
+const OVERLAY_STROKE: Record<NonNullable<FileOverlay["policy"]>, string> = {
+  allowed: "oklch(0.62 0.12 150)",
+  risky: "oklch(0.75 0.13 75)",
+  forbidden: "oklch(0.64 0.19 25)",
+};
+
 /** The "territory": treemap directories and file cells, with focus dimming. */
 export function Territory({
   layout,
@@ -127,12 +157,14 @@ export function Territory({
   focusRegion,
   focusFile,
   activeFiles,
+  overlays,
 }: {
   layout: Layout;
   showLabels: boolean;
   focusRegion: string | null;
   focusFile: string | null;
   activeFiles: Set<string>;
+  overlays?: Map<string, FileOverlay>;
 }) {
   return (
     <g>
@@ -174,9 +206,20 @@ export function Territory({
         // file cell
         const isFocusFile = focusFile != null && r.path === focusFile;
         const isActive = activeFiles.has(r.path);
+        const overlay = overlays?.get(r.path);
+        const policy = overlay?.policy;
         let stroke = "oklch(0.32 0.008 250)";
         let strokeW = 0.75;
         let fill = FILE_FILL;
+        if (policy) {
+          fill = OVERLAY_FILL[policy];
+          stroke = OVERLAY_STROKE[policy];
+          strokeW = 1;
+        } else if (overlay?.touched) {
+          fill = FILE_FILL_HI;
+          stroke = "var(--accent)";
+          strokeW = 1.25;
+        }
         if (isActive && !focusRegion) {
           fill = FILE_FILL_HI;
           stroke = "oklch(0.45 0.01 250)";
@@ -211,9 +254,78 @@ export function Territory({
                 {truncate(r.name, w, 5.6)}
               </text>
             )}
+            {overlay?.touched && w > 8 && h > 8 && (
+              <circle cx={r.x1 - 5} cy={r.y0 + 5} r={2} fill="var(--accent)" />
+            )}
           </g>
         );
       })}
+    </g>
+  );
+}
+
+export function TerritoryOutlines({
+  outlines,
+}: {
+  outlines: { rect: Rect; color: string; label: string; active?: boolean }[];
+}) {
+  return (
+    <g className="territory-outlines">
+      {outlines.map(({ rect, color, label, active }) => {
+        const w = rect.x1 - rect.x0;
+        const h = rect.y1 - rect.y0;
+        if (w < 2 || h < 2) return null;
+        return (
+          <g key={`${label}:${rect.path}`} opacity={active ? 0.95 : 0.58}>
+            <rect
+              x={rect.x0 + 2}
+              y={rect.y0 + 2}
+              width={Math.max(0, w - 4)}
+              height={Math.max(0, h - 4)}
+              rx={6}
+              fill="none"
+              stroke={color}
+              strokeWidth={active ? 2 : 1.35}
+              strokeDasharray={active ? "none" : "5 4"}
+            />
+            {w > 54 && h > 22 && (
+              <text
+                x={rect.x0 + 7}
+                y={rect.y0 + 28}
+                className="territory-label"
+                fill={color}
+              >
+                {label}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+export function DropTargetHighlight({ rect }: { rect: Rect | null }) {
+  if (!rect) return null;
+  const w = rect.x1 - rect.x0;
+  const h = rect.y1 - rect.y0;
+  return (
+    <g className="drop-target">
+      <rect
+        x={rect.x0 + 2}
+        y={rect.y0 + 2}
+        width={Math.max(0, w - 4)}
+        height={Math.max(0, h - 4)}
+        rx={7}
+        fill="color-mix(in oklch, var(--accent) 10%, transparent)"
+        stroke="var(--accent)"
+        strokeWidth={2}
+      />
+      {w > 70 && h > 22 && (
+        <text x={rect.x0 + 8} y={rect.y0 + 28} className="drop-label" fill="var(--accent)">
+          assign territory: {rect.path || "repo"}
+        </text>
+      )}
     </g>
   );
 }

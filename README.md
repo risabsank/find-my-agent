@@ -1,4 +1,4 @@
-# Find My Agent
+# CartoAI
 
 A real-time, spatial **"Find My"-style live map for parallel Claude Code agents**.
 Instead of a log timeline, the **codebase itself is the map**: the file tree is
@@ -182,19 +182,76 @@ Both sessions report to the same collector. Because file paths are normalized
 relative to each agent's own `cwd`, both worktrees land on the **same** tree —
 so you see two independent dots roaming one map.
 
+## Territory assignment + mission overlays
+
+For parallel coding, the map can show who owns what. Drag an agent dot onto the
+treemap to assign the containing folder as that agent's territory, e.g.
+`client/src/**`. Click the agent to focus it and the map overlays:
+
+- **allowed** files inside the assigned territory
+- **risky** files outside the assigned territory
+- **forbidden** files from the mission's off-limits paths
+- **touched** files the agent recently visited
+
+Territory breaches are flagged live as amber interventions but are not blocked;
+explicit forbidden write/edit paths are still denied. This works locally even
+without `ANTHROPIC_API_KEY`. The dashboard intentionally does not show
+"completed" files yet because Claude hooks do not provide a reliable per-file
+completion signal.
+
+### Reliable hackathon demo
+
+Use this when you want a deterministic fallback instead of relying on a live
+Claude Code session. It shows two agents, a subagent, assigned territories,
+allowed/risky/forbidden/touched overlays, amber territory warnings, red blocked
+edits, and live map expansion.
+
+```bash
+# terminal 1 — clean collector on a separate port, no Redis/API-key state needed
+bun run build
+COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server
+
+# terminal 2 — scripted mission-control story
+COLLECTOR_PORT=4100 bun run demo:mission
+
+# optional booth mode: repeat until Ctrl-C
+COLLECTOR_PORT=4100 bun run demo:mission -- --loop
+```
+
+Open [http://localhost:4100](http://localhost:4100). For the best visual, click
+`demo-client-agent` while the script is running so the overlay legend switches to
+allowed/risky/forbidden/touched. The demo sets territories through the same
+mission API that drag-and-drop uses; you can still manually drag a pin during or
+after the script to show the interactive assignment.
+
+For a much busier map with many parallel dots:
+
+```bash
+COLLECTOR_PORT=4100 bun run demo:swarm
+
+# optional: tune density or loop it for a booth display
+COLLECTOR_PORT=4100 bun run demo:swarm -- --agents 10 --subagents 3 --waves 10 --pace 2 --loop
+```
+
+`demo:swarm` defaults to 8 top-level agents, 2 subagents each, 8 movement waves,
+and a slower presentation pace. It is meant as the “wow, many agents at once”
+visual; `demo:mission` is still the clearer guided story for judges. Use
+`--pace 1` for faster testing or `--pace 2.5` for a slower stage demo.
+
 ## Alignment Autopilot (AI supervisor)
 
 Beyond watching, the dashboard can **keep agents on mission**. Give an agent a
 mission (auto-derived from its prompt, or set in the detail panel with
-guardrails + off-limits paths); a background **Claude Sonnet 4.6** loop judges
-whether it's on-track, and the collector's hook responses **autonomously steer it
-back** — injecting a correction or **denying** off-mission/destructive tool calls
-(with a reason the agent reads and acts on). Dots turn amber/red on drift, a live
-strip shows each intervention, and a topbar control gives an autonomous/observe
-toggle + kill-switch.
+assigned territory, guardrails, and off-limits paths); a background **Claude
+Sonnet 4.6** loop judges whether it's on-track, and the collector's hook
+responses **autonomously steer it back** — injecting a correction or **denying**
+off-mission/destructive tool calls (with a reason the agent reads and acts on).
+Dots turn amber/red on drift, a live strip shows each intervention, and a topbar
+control gives an autonomous/observe toggle + kill-switch.
 
-Requires `ANTHROPIC_API_KEY` (without it the supervisor is disabled and the app
-still runs). Try it:
+Requires `ANTHROPIC_API_KEY` for AI judgment (without it, local mission storage,
+territory overlays, boundary warnings, and forbidden-path blocking still work).
+Try it:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... fma      # or: ... bun run server

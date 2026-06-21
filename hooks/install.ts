@@ -1,4 +1,4 @@
-// Installs/uninstalls Find My Agent's HTTP hooks into a .claude/settings.json by
+// Installs/uninstalls CartoAI's HTTP hooks into a .claude/settings.json by
 // deep-merging the snippet (existing hooks preserved). Reused by the `fma` CLI.
 //
 // Standalone usage (project-scoped):

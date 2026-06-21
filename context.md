@@ -1,4 +1,4 @@
-# context.md — agent handoff for "Find My Agent"
+# context.md — agent handoff for "CartoAI"
 
 > Purpose: everything a coding agent (Claude, Codex, or otherwise) needs to
 > resume work on this repo in a fresh session. Read this first. **Keep it
@@ -142,6 +142,16 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   `install`/`uninstall` (global default, `--project` opt), `help`.
 - `demo/simulate.ts` — fake hook event generator; also creates/removes real files
   under `demo/scratch/` to demonstrate the live-expanding map (auto-cleaned).
+- `demo/mission-control.ts` — deterministic hackathon fallback demo for the
+  territory features: two agents, one subagent, assigned territories,
+  allowed/risky/forbidden/touched overlays, boundary warnings, hard blocks, and
+  live map expansion. Run on a clean port with
+  `COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server`, then
+  `COLLECTOR_PORT=4100 bun run demo:mission` (or `-- --loop`).
+- `demo/swarm.ts` — high-density visual demo: defaults to 8 top-level agents and
+  2 subagents each, with territory missions, 8 slower movement waves, amber
+  breaches, and red blocked edits. Run `COLLECTOR_PORT=4100 bun run demo:swarm`;
+  tune with `-- --agents 10 --subagents 3 --waves 10 --pace 2 --loop`.
 
 ## Key behaviors & non-obvious decisions
 - **Live file map (expand/contract).** The collector re-scans the repo (debounced
@@ -154,6 +164,11 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   Do not revert to size weighting without restoring visibility for tiny files.
 - **Dots are HTML, in a transform layer counter-scaled by `1/k`** so they stay a
   constant screen size while the map zooms. File cells are SVG.
+- **Territory assignment is drag-first.** Drag an agent dot onto the treemap to
+  assign the containing folder as `mission.allowedGlobs` (e.g. `client/src/**`).
+  Focused agents show mission overlays: allowed, risky (outside territory),
+  forbidden (`denyGlobs`), and touched files. "Completed" is intentionally NOT
+  shown because there is no reliable per-file completion signal from hooks.
 - **Token/cost is STUBBED** end-to-end (`isStub:true`, "stub" chip in UI). The
   swap-in point is `TokenSource` in `server/src/tokens.ts`.
 - **"Progress" in the detail panel is estimated** from agent lifecycle/status
@@ -185,28 +200,44 @@ the response schema.)
   broadcasts, logs `detected`/`recovered` interventions, queues a steer.
 - *Instant enforcement* (`supervisor.decide(ev)` called from `/events`): reads only
   cached state — **no LLM in the request path**, so the agent never stalls.
-  Deterministic guardrail: `PreToolUse` editing a `mission.denyGlobs` path → deny.
-  Otherwise inject any queued correction. Fail-open (`{}`) on anything else.
+  Deterministic guardrails: `PreToolUse` editing a `mission.denyGlobs` path →
+  deny; file events outside `mission.allowedGlobs` → amber `boundary`
+  intervention + local drifting state, but **not** denial. Otherwise inject any
+  queued correction. Fail-open (`{}`) on anything else.
 
-**Mission** = `{goal, guardrails[], denyGlobs[], source}` — auto-derived from the
-agent's `UserPromptSubmit` prompt, and/or set in the dashboard detail panel
-(`POST /api/mission`). **Controls:** `POST /api/supervisor {autonomous?, killSwitch?}`
-(topbar Autopilot toggle + kill-switch). **Requires `ANTHROPIC_API_KEY`** — without
-it `DisabledSupervisor` no-ops and the topbar shows "Autopilot off".
+**Mission** = `{goal, allowedGlobs[], guardrails[], denyGlobs[], source}` —
+auto-derived from the agent's `UserPromptSubmit` prompt, set by dragging an agent
+onto the map, and/or edited in the dashboard detail panel (`POST /api/mission`).
+**Controls:** `POST /api/supervisor {autonomous?, killSwitch?}` (topbar Autopilot
+toggle + kill-switch). **Requires `ANTHROPIC_API_KEY` for LLM judgment only** —
+without it, mission storage, territory overlays, boundary warnings, and
+deterministic deny-glob blocking still work; the topbar shows "Autopilot off".
 
 **Data model** (`shared/types.ts`): `Mission`, `Alignment`, `InterventionEntry`,
 `SupervisorStatus`; `AgentState.mission`/`.alignment`; `ServerMessage` adds
 `intervention` + `supervisorStatus`; snapshot carries `supervisor` + `interventions`.
 
-**UI:** pin color/⚠ flag by alignment (`client/src/Pins.tsx`); detail panel has a
-Mission editor, an Alignment section (state + reason + correction), and an
-Interventions timeline (`AgentDetail.tsx`); live intervention strip + Autopilot
-control in `App.tsx`; `ALIGNMENT` palette in `ui.ts`.
+**UI:** pin color/⚠ flag by alignment (`client/src/Pins.tsx`); drag pins to assign
+territory; focused map overlays allowed/risky/forbidden/touched files
+(`TreeMap.tsx` + `App.tsx`); detail panel has a Mission editor, an Alignment
+section (state + reason + correction), and an Interventions timeline
+(`AgentDetail.tsx`); live intervention strip + Autopilot control in `App.tsx`;
+`ALIGNMENT` palette in `ui.ts`.
 
 **Demo:** `bun run demo:autopilot` (`demo/autopilot.ts`) — sets a mission with an
 off-limits zone, drives an agent that drifts into it (instant guardrail **block** +
 AI judges **off_track**), then course-corrects (**recovered**). Needs the collector
 running with `ANTHROPIC_API_KEY`.
+
+**Reliable no-API demo:** `bun run demo:mission` (`demo/mission-control.ts`) —
+sets missions through `/api/mission` and posts fake hook events to show the
+territory overlay story without a real Claude session or API key. Recommended
+hackathon setup: `bun run build`, then
+`COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server`, open
+`http://localhost:4100`, and run
+`COLLECTOR_PORT=4100 bun run demo:mission -- --loop` in another terminal.
+Use `bun run demo:swarm` when you want a more crowded visual with many concurrent
+agents/subagents; use `demo:mission` when you want the clearer judge narrative.
 
 ## Redis Agent Memory (durable state + semantic recall)
 Optional Redis layer that makes the project durable and gives the Autopilot
