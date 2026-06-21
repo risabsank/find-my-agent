@@ -154,6 +154,9 @@ export function AgentDetail({
           {align.correction && align.state !== "on_track" && (
             <p className="align-correction">↪ {align.correction}</p>
           )}
+          {!!align.recalled && align.recalled > 0 && (
+            <p className="align-recall">🧠 informed by {align.recalled} recalled memor{align.recalled === 1 ? "y" : "ies"}</p>
+          )}
         </section>
       )}
 

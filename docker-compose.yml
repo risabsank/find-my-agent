@@ -1,0 +1,15 @@
+# Local, vector-capable Redis for Find My Agent persistence + agent memory.
+#   docker compose up -d        → Redis on :6379 (RediSearch/vector included),
+#                                 RedisInsight UI on http://localhost:8001
+# Then run the collector with:  REDIS_URL=redis://localhost:6379 fma   (or bun run server)
+services:
+  redis:
+    image: redis/redis-stack:latest
+    container_name: fma-redis
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - fma-redis-data:/data
+volumes:
+  fma-redis-data:

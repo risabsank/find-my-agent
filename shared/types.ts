@@ -49,6 +49,8 @@ export interface Alignment {
   /** Concrete steering text injected/denied-with when off course. */
   correction?: string;
   severity?: "low" | "med" | "high";
+  /** How many past memories were recalled to inform this verdict (Redis). */
+  recalled?: number;
   at: number; // epoch ms
 }
 
@@ -68,6 +70,10 @@ export interface SupervisorStatus {
   autonomous: boolean; // act automatically vs. observe-only
   killSwitch: boolean; // hard stop: never intervene
   model: string;
+  /** Redis persistence on (REDIS_URL set + connected). */
+  persisted: boolean;
+  /** Agent-memory recall mode. */
+  memory: "vector" | "fulltext" | "off";
 }
 
 export interface AgentState {

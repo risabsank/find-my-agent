@@ -7,6 +7,15 @@ import { Broadcaster } from "./ws.ts";
 import { normalize, type RawHook } from "./normalize.ts";
 import { scanTree } from "./tree.ts";
 import { createSupervisor, type Decision } from "./supervisor.ts";
+import {
+  connectRedis,
+  persistAgent,
+  appendEvent,
+  loadAgents,
+  loadMissions,
+  loadInterventions,
+} from "./redis.ts";
+import { ensureMemoryIndex } from "./memory.ts";
 
 // ---- Mapped repo resolution -------------------------------------------------
 // The repo whose file tree becomes the map. Override with TARGET_REPO; defaults
@@ -50,7 +59,23 @@ function getTree(): TreeNode | null {
 const store = new AgentStore();
 const bus = new Broadcaster();
 const supervisor = createSupervisor(store, bus);
-supervisor.start();
+
+// Connect Redis (if REDIS_URL) and rehydrate prior state, then start the loop.
+async function bootPersistence(): Promise<void> {
+  const ok = await connectRedis();
+  if (ok) {
+    await ensureMemoryIndex();
+    for (const agent of await loadAgents()) store.hydrate(agent);
+    const missions = await loadMissions();
+    for (const [agentId, m] of Object.entries(missions)) supervisor.loadMission(agentId, m);
+    supervisor.loadInterventions(await loadInterventions(50));
+    const n = store.snapshot().length;
+    if (n > 0) console.log(`[redis] rehydrated ${n} agent(s)`);
+  }
+  supervisor.setRepo(getTree()?.name ?? "repo");
+  supervisor.start();
+}
+void bootPersistence();
 
 /** Map a supervisor Decision to the Claude Code hook response JSON. */
 function buildHookResponse(decision: Decision, ev: { event: string }): unknown {
@@ -149,12 +174,16 @@ const server = Bun.serve({
         existsSync(raw.cwd)
       ) {
         targetRepo = resolve(raw.cwd);
+        supervisor.setRepo(targetRepo.split("/").pop() || "repo");
       }
 
       const ev = normalize(raw, targetRepo);
       const agent = store.apply(ev);
       supervisor.noteEvent(ev);
       bus.broadcast({ type: "event", event: ev, agent });
+      // Durable record (fire-and-forget; no-op without Redis).
+      persistAgent(agent);
+      appendEvent(ev);
 
       // Autopilot: decide instantly (cached verdict, no LLM in this path) whether
       // to allow / deny / inject a correction. Fail-open via {} on allow.
@@ -222,6 +251,8 @@ const server = Bun.serve({
         targetRepo,
         agents: store.snapshot().length,
         clients: bus.size,
+        persisted: supervisor.status().persisted,
+        memory: supervisor.status().memory,
       });
     }
 

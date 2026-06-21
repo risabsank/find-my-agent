@@ -206,6 +206,24 @@ How it stays fast: judgment (the LLM) runs in the background; enforcement (the
 hook response) reads only the cached verdict, so it never stalls the agent. See
 [context.md](context.md) → "Alignment Autopilot" for the architecture.
 
+## Durability + agent memory (Redis, optional)
+
+By default everything is in-memory. Point the collector at Redis and it becomes
+**durable** (state + a Redis Stream event log; the map **survives restarts**) and
+the Autopilot gains **memory** — past drifts/interventions are stored in a
+RediSearch index and **semantically recalled** to inform future judgments
+(vector search with `VOYAGE_API_KEY`, full-text otherwise).
+
+```bash
+docker compose up -d                          # Redis Stack on :6379 (vector-capable)
+REDIS_URL=redis://localhost:6379 fma          # or: ... bun run server
+# optional semantic recall: VOYAGE_API_KEY=... REDIS_URL=... fma
+```
+
+Without `REDIS_URL` the app runs exactly as before. The topbar shows a **Redis**
+chip + memory mode when persistence is on. See [context.md](context.md) →
+"Redis Agent Memory" for keys, the fallback matrix, and inspection commands.
+
 ## Token / cost (stubbed for now)
 
 `AgentState` carries a `TokenUsage` field, and the UI renders it — but v1 values

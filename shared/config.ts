@@ -17,6 +17,18 @@ export const STALE_SECONDS = 45;
 /** Seconds after stop/end before an agent is removed from the map. */
 export const REMOVE_AFTER_SECONDS = 120;
 
+// ---- Redis Agent Memory ----
+/** When set, the collector persists to Redis and rehydrates on restart. */
+export const REDIS_URL =
+  (typeof process !== "undefined" && process.env?.REDIS_URL) || "";
+/** Embeddings provider (Voyage) for semantic recall; full-text fallback if unset. */
+export const VOYAGE_API_KEY =
+  (typeof process !== "undefined" && process.env?.VOYAGE_API_KEY) || "";
+export const VOYAGE_MODEL = "voyage-3-lite";
+export const VOYAGE_DIM = 512; // voyage-3-lite output dimension
+/** How many past memories the supervisor recalls per judgment. */
+export const MEMORY_RECALL_K = 3;
+
 // ---- Alignment Autopilot ----
 /** Model that judges whether agents are on-mission. */
 export const SUPERVISOR_MODEL = "claude-sonnet-4-6";

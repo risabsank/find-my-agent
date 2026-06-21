@@ -112,6 +112,12 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   interface + `ClaudeSupervisor` (background Sonnet 4.6 judgment loop → verdicts;
   queues steers / deny rules; `decide(ev)` is the instant enforcement used by
   `/events`) + `DisabledSupervisor` (no API key). Mirrors the `tokens.ts` pattern.
+- `server/src/redis.ts` — optional Redis persistence (gated by `REDIS_URL`):
+  connect, persist agent/mission, `XADD` event/intervention streams, and
+  `loadAgents`/`loadMissions`/`loadInterventions` for boot rehydrate. See "Redis
+  Agent Memory".
+- `server/src/memory.ts` — RediSearch agent memory: `ensureMemoryIndex`,
+  `recordMemory`, `recallMemories` (vector via Voyage, else full-text).
 - `server/src/ws.ts` — `Broadcaster` (set of WS clients + broadcast).
 - `client/src/useCollector.ts` — WS hook; reduces snapshot/event/tree/agentRemoved
   into state; auto-reconnects. Re-applies the tree on `tree` messages (live map).
@@ -201,6 +207,37 @@ control in `App.tsx`; `ALIGNMENT` palette in `ui.ts`.
 off-limits zone, drives an agent that drifts into it (instant guardrail **block** +
 AI judges **off_track**), then course-corrects (**recovered**). Needs the collector
 running with `ANTHROPIC_API_KEY`.
+
+## Redis Agent Memory (durable state + semantic recall)
+Optional Redis layer that makes the project durable and gives the Autopilot
+memory. **Gated by `REDIS_URL`** — unset = today's exact in-memory behavior
+(same adapter+fallback philosophy as `TokenSource`/`Supervisor`). Everything
+fails open.
+
+- **Persistence / system-of-record** (`server/src/redis.ts`): node-redis client;
+  on each event the collector persists the agent (`SET fma:agent:<id>`) and
+  `XADD fma:events` (Redis Stream); missions (`SET fma:mission:<id>`) and
+  interventions (`XADD fma:interventions`) persist too. On boot,
+  `bootPersistence()` in `index.ts` connects and **rehydrates** agents/missions/
+  recent interventions back into the in-memory `AgentStore` (`store.hydrate`) +
+  supervisor (`loadMission`/`loadInterventions`) — so a restart restores the map.
+- **Agent memory / recall** (`server/src/memory.ts`): a RediSearch index
+  `fma:mem` (TAG `repo`/`kind`, TEXT `text`, optional `VECTOR`). The supervisor
+  `recordMemory()` on notable verdicts (drift/off/recovered) and
+  `recallMemories(repo, goal+file)` before each judgment, prepending
+  `RELEVANT PAST MEMORY` to the prompt — so the Autopilot learns across sessions
+  and restarts. `alignment.recalled` surfaces the count in the UI.
+- **Embeddings:** Voyage (`VOYAGE_API_KEY`, `voyage-3-lite`, dim 512) → vector
+  KNN; without it → RediSearch full-text recall. Mode shown via
+  `SupervisorStatus.memory` (`vector|fulltext|off`) + `.persisted`.
+- **Fallback matrix:** no `REDIS_URL` → in-memory only; Redis but no RediSearch →
+  persistence+streams only; Redis+RediSearch, no Voyage → full-text recall;
+  +Voyage → vector recall.
+- **Run it:** `docker compose up -d` (Redis Stack on :6379, UI :8001), then
+  `REDIS_URL=redis://localhost:6379 [VOYAGE_API_KEY=...] fma`. Inspect with
+  `redis-cli KEYS 'fma:*'`, `XLEN fma:events`, `FT.INFO fma:mem`.
+- Config in `shared/config.ts`: `REDIS_URL`, `VOYAGE_API_KEY`, `VOYAGE_MODEL`,
+  `VOYAGE_DIM`, `MEMORY_RECALL_K`.
 
 ## Open questions / known gaps
 - **Subagent identity is unconfirmed.** Docs confirm `SubagentStart`/`SubagentStop`

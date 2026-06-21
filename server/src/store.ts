@@ -131,6 +131,11 @@ export class AgentStore {
     return this.agents.get(agentId);
   }
 
+  /** Restore a persisted agent (rehydrate from Redis on boot). */
+  hydrate(agent: AgentState): void {
+    this.agents.set(agent.agentId, agent);
+  }
+
   /** Autopilot: set/merge an agent's mission. Returns the agent if present. */
   setMission(agentId: string, mission: AgentState["mission"]): AgentState | undefined {
     const a = this.agents.get(agentId);

@@ -238,6 +238,15 @@ body{
 .ap-toggle:hover,.ap-kill:hover{ color:var(--text); border-color:color-mix(in oklch, var(--accent) 45%, var(--border)); }
 .ap-kill.armed{ color:oklch(0.86 0.11 30); border-color:oklch(0.5 0.12 30); background:oklch(0.26 0.06 30); }
 
+/* ===== PERSISTENCE (Redis) chip ===== */
+.persist{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-2);
+  padding:3px 9px; background:var(--bg-2); border:1px solid var(--border-soft); border-radius:20px; }
+.persist-dot{ width:7px; height:7px; border-radius:50%; background:oklch(0.7 0.17 18);
+  box-shadow:0 0 0 3px color-mix(in oklch, oklch(0.7 0.17 18) 22%, transparent); }
+.persist-mem{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3);
+  border:1px solid var(--border); border-radius:4px; padding:0 5px; }
+.align-recall{ font-size:11.5px; color:var(--text-3); margin:6px 0 0; }
+
 /* ===== ALIGNMENT + MISSION (detail panel) ===== */
 .align-badge{ font-size:11px; font-weight:600; border:1px solid; border-radius:11px; padding:1px 8px; }
 .align-correction{ font-size:12.5px; color:var(--text); line-height:1.45; margin:8px 0 0;

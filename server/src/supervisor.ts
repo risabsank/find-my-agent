@@ -10,9 +10,12 @@ import {
   SUPERVISOR_MODEL,
   SUPERVISOR_INTERVAL_MS,
   AUTONOMOUS_DEFAULT,
+  MEMORY_RECALL_K,
 } from "../../shared/config.ts";
 import type { AgentStore } from "./store.ts";
 import type { Broadcaster } from "./ws.ts";
+import { persistMission, persistIntervention, redisEnabled } from "./redis.ts";
+import { recallMemories, recordMemory, memoryMode } from "./memory.ts";
 
 /** What the hook response should do for one event (computed instantly). */
 export type Decision =
@@ -27,6 +30,11 @@ export interface Supervisor {
   status(): SupervisorStatus;
   setAutonomy(opts: { autonomous?: boolean; killSwitch?: boolean }): SupervisorStatus;
   setMission(agentId: string, mission: Mission): void;
+  /** Memory partition (the mapped repo name). */
+  setRepo(name: string): void;
+  /** Rehydrate persisted mission/interventions on boot (Redis). */
+  loadMission(agentId: string, mission: Mission): void;
+  loadInterventions(entries: InterventionEntry[]): void;
   /** Called from /events: auto-derive mission from prompts, etc. */
   noteEvent(ev: NormalizedEvent): void;
   /** Instant, no-LLM enforcement decision for a hook response. */
@@ -56,12 +64,22 @@ export class DisabledSupervisor implements Supervisor {
   start(): void {}
   stop(): void {}
   status(): SupervisorStatus {
-    return { enabled: false, autonomous: false, killSwitch: false, model: SUPERVISOR_MODEL };
+    return {
+      enabled: false,
+      autonomous: false,
+      killSwitch: false,
+      model: SUPERVISOR_MODEL,
+      persisted: redisEnabled(),
+      memory: memoryMode(),
+    };
   }
   setAutonomy(): SupervisorStatus {
     return this.status();
   }
   setMission(): void {}
+  setRepo(): void {}
+  loadMission(): void {}
+  loadInterventions(): void {}
   noteEvent(): void {}
   decide(): Decision {
     return { kind: "allow" };
@@ -118,6 +136,7 @@ export class ClaudeSupervisor implements Supervisor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private autonomous = AUTONOMOUS_DEFAULT;
   private killSwitch = false;
+  private repoName = "repo";
 
   private missions = new Map<string, Mission>();
   private manual = new Set<string>(); // agents with a user-set mission
@@ -147,6 +166,8 @@ export class ClaudeSupervisor implements Supervisor {
       autonomous: this.autonomous,
       killSwitch: this.killSwitch,
       model: SUPERVISOR_MODEL,
+      persisted: redisEnabled(),
+      memory: memoryMode(),
     };
   }
 
@@ -168,8 +189,23 @@ export class ClaudeSupervisor implements Supervisor {
     this.missions.set(agentId, m);
     this.manual.add(agentId);
     this.store.setMission(agentId, m);
+    persistMission(agentId, m);
     this.broadcastAgent(agentId, "Mission");
     this.lastJudged.delete(agentId); // force a re-judge next tick
+  }
+
+  setRepo(name: string): void {
+    if (name) this.repoName = name;
+  }
+
+  loadMission(agentId: string, mission: Mission): void {
+    this.missions.set(agentId, mission);
+    if (mission.source === "manual") this.manual.add(agentId);
+    this.store.setMission(agentId, mission);
+  }
+
+  loadInterventions(entries: InterventionEntry[]): void {
+    this.interventions = entries.slice(-200);
   }
 
   noteEvent(ev: NormalizedEvent): void {
@@ -260,6 +296,12 @@ export class ClaudeSupervisor implements Supervisor {
       .slice(-10)
       .map((e) => `- ${e.event}${e.tool ? ` ${e.tool}` : ""}${e.filePath ? ` ${e.filePath}` : ""}`)
       .join("\n");
+    // Recall relevant past memories (Redis) to inform this judgment.
+    const memories = await recallMemories(
+      this.repoName,
+      `${mission.goal} ${agent.currentFile ?? ""}`,
+      MEMORY_RECALL_K,
+    );
     const user = [
       `MISSION GOAL: ${mission.goal}`,
       mission.guardrails.length ? `GUARDRAILS: ${mission.guardrails.join("; ")}` : "",
@@ -267,6 +309,7 @@ export class ClaudeSupervisor implements Supervisor {
       `CURRENT FILE: ${agent.currentFile ?? "(none)"}`,
       `CURRENT TOOL: ${agent.currentTool ?? "(none)"}`,
       `RECENT ACTIONS:\n${activity || "(none yet)"}`,
+      memories.length ? `RELEVANT PAST MEMORY (from prior sessions):\n${memories.map((m) => `- ${m}`).join("\n")}` : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -292,12 +335,22 @@ export class ClaudeSupervisor implements Supervisor {
       reason: verdict.reason,
       correction: verdict.correction,
       severity: verdict.severity,
+      recalled: memories.length,
       at: Date.now(),
     };
     this.store.setAlignment(agentId, alignment);
 
     const prev = this.prevState.get(agentId) ?? "unknown";
     this.prevState.set(agentId, verdict.state);
+
+    // Persist a memory for notable verdicts so future sessions recall the lesson.
+    if (BAD(verdict.state) || (verdict.state === "on_track" && BAD(prev))) {
+      void recordMemory({
+        repo: this.repoName,
+        kind: verdict.state,
+        text: `[${mission.goal}] ${agent.currentFile ? `at ${agent.currentFile}: ` : ""}${verdict.reason}${verdict.correction ? ` → ${verdict.correction}` : ""}`,
+      });
+    }
 
     // Transition into a bad state → detect + queue a steer (nudge on next hook).
     if (BAD(verdict.state) && !BAD(prev)) {
@@ -324,6 +377,7 @@ export class ClaudeSupervisor implements Supervisor {
   private log(entry: InterventionEntry): void {
     this.interventions.push(entry);
     if (this.interventions.length > 200) this.interventions.shift();
+    persistIntervention(entry);
     this.bus.broadcast({ type: "intervention", entry });
   }
 

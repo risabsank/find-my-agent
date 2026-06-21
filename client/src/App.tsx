@@ -157,6 +157,13 @@ export function App() {
         </div>
 
         <div className="topbar-right">
+          {/* Persistence (Redis) indicator */}
+          {supervisor?.persisted && (
+            <span className="persist" title={`Redis persistence on · memory: ${supervisor.memory}`}>
+              <span className="persist-dot" /> Redis
+              {supervisor.memory !== "off" && <span className="persist-mem">{supervisor.memory}</span>}
+            </span>
+          )}
           {/* Autopilot control */}
           {supervisor?.enabled ? (
             <div className="autopilot">
