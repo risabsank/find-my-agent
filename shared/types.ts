@@ -29,6 +29,13 @@ export interface ActivityEntry {
   ts: number;
 }
 
+/** A user-directed request for an agent to focus a specific file. */
+export interface FocusRequest {
+  filePath: string;
+  requestedAt: number;
+  deliveredAt?: number;
+}
+
 // ---- Alignment Autopilot ----------------------------------------------------
 
 /** What an agent is supposed to be doing — its intended scope + guardrails. */
@@ -106,6 +113,8 @@ export interface AgentState {
   mission?: Mission;
   /** Latest AI alignment verdict (autopilot). */
   alignment?: Alignment;
+  /** User-requested file focus, injected on the next eligible hook. */
+  focusRequest?: FocusRequest;
   /** Assigned per top-level agent; subagents inherit + shade. CSS color string. */
   color: string;
 }

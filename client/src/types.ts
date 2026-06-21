@@ -4,6 +4,7 @@ export type {
   AgentStatus,
   TokenUsage,
   ActivityEntry,
+  FocusRequest,
   NormalizedEvent,
   TreeNode,
   ServerMessage,

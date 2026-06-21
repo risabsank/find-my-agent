@@ -16,7 +16,7 @@ currently touching. See each agent's task, current tool, elapsed time, and
 ```
  ┌──────────────────────────────┬───────────────┐
  │  server/                     │  AGENTS  2    │
- │   ┌──────┬──────┐  ●demo-ses │ ● agent  ●●●  │
+ │   ┌──────┬──────┐  ●agent-a  │ ● agent  ●●●  │
  │   │store │index │            │   Refactor…   │
  │   ├──────┴──────┤            │ ● Explore     │
  │  client/  shared/ ●Explore   │   Explore…    │
@@ -40,8 +40,6 @@ currently touching. See each agent's task, current tool, elapsed time, and
   animates a dot per agent. Subagents are nested under / shaded from their parent.
 - **`hooks/`** — a ready-to-merge `.claude/settings.json` snippet (native
   `type: "http"` hooks) plus an installer that merges it into any target repo.
-- **`demo/`** — a simulator that fires fake-but-realistic hook events so you can
-  watch the map move **without a live agent**.
 - **`shared/`** — the `AgentState` / event data model and shared config.
 
 ## Prerequisites
@@ -79,28 +77,6 @@ Flags/commands: `fma --port N`, `fma --no-open`, `fma watch [path]`,
 ```bash
 bun install
 ```
-
-## Quick start (fake events — see the map move first)
-
-Open **three terminals** from the repo root:
-
-```bash
-# 1. collector (maps THIS repo's file tree by default)
-bun run server
-
-# 2. frontend  → http://localhost:5173
-bun run client
-
-# 3. fire a scripted sequence of fake agent events
-bun run demo
-```
-
-Watch the dots: a main agent reads/edits files under `server/`, spawns an
-`Explore` subagent that roams `client/`, then both stop. Hover any dot for its
-task/tool/file/tokens; the right-hand list shows live status badges.
-
-> Token/cost values are **stubbed** (flagged `stub` in the UI). See
-> [Token / cost](#token--cost-stubbed-for-now) below.
 
 ## Wire up real Claude Code agents
 
@@ -184,9 +160,10 @@ so you see two independent dots roaming one map.
 
 ## Territory assignment + mission overlays
 
-For parallel coding, the map can show who owns what. Drag an agent dot onto the
-treemap to assign the containing folder as that agent's territory, e.g.
-`client/src/**`. Click the agent to focus it and the map overlays:
+For parallel coding, the map can show who owns what. Drag an agent dot onto a
+folder in the treemap to assign that folder as the agent's territory, e.g.
+`client/src/**`. Drag onto a file to request that the agent focus that file on
+its next hook event. Click the agent to focus it and the map overlays:
 
 - **allowed** files inside the assigned territory
 - **risky** files outside the assigned territory
@@ -198,45 +175,6 @@ explicit forbidden write/edit paths are still denied. This works locally even
 without `ANTHROPIC_API_KEY`. The dashboard intentionally does not show
 "completed" files yet because Claude hooks do not provide a reliable per-file
 completion signal.
-
-### Reliable hackathon demo
-
-Use this when you want a deterministic fallback instead of relying on a live
-Claude Code session. It shows two agents, a subagent, assigned territories,
-allowed/risky/forbidden/touched overlays, amber territory warnings, red blocked
-edits, and live map expansion.
-
-```bash
-# terminal 1 — clean collector on a separate port, no Redis/API-key state needed
-bun run build
-COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server
-
-# terminal 2 — scripted mission-control story
-COLLECTOR_PORT=4100 bun run demo:mission
-
-# optional booth mode: repeat until Ctrl-C
-COLLECTOR_PORT=4100 bun run demo:mission -- --loop
-```
-
-Open [http://localhost:4100](http://localhost:4100). For the best visual, click
-`demo-client-agent` while the script is running so the overlay legend switches to
-allowed/risky/forbidden/touched. The demo sets territories through the same
-mission API that drag-and-drop uses; you can still manually drag a pin during or
-after the script to show the interactive assignment.
-
-For a much busier map with many parallel dots:
-
-```bash
-COLLECTOR_PORT=4100 bun run demo:swarm
-
-# optional: tune density or loop it for a booth display
-COLLECTOR_PORT=4100 bun run demo:swarm -- --agents 10 --subagents 3 --waves 10 --pace 2 --loop
-```
-
-`demo:swarm` defaults to 8 top-level agents, 2 subagents each, 8 movement waves,
-and a slower presentation pace. It is meant as the “wow, many agents at once”
-visual; `demo:mission` is still the clearer guided story for judges. Use
-`--pace 1` for faster testing or `--pace 2.5` for a slower stage demo.
 
 ## Alignment Autopilot (AI supervisor)
 
@@ -255,8 +193,6 @@ Try it:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... fma      # or: ... bun run server
-bun run demo:autopilot                # agent drifts into an off-limits zone →
-                                      # blocked/steered → recovers, live on the map
 ```
 
 How it stays fast: judgment (the LLM) runs in the background; enforcement (the
@@ -303,8 +239,7 @@ guess, the collector:
 - falls back to treating events as the main agent when no discriminator exists.
 
 When you run a real Task subagent, check the collector's `[event]` logs to confirm
-the actual field names, then trim that probe list. The demo uses assumed field
-names purely to illustrate dot nesting.
+the actual field names, then trim that probe list.
 
 ## Project layout
 
@@ -314,7 +249,6 @@ find-my-agent/
   server/      src/{index,store,normalize,tree,tokens,ws}.ts  — Bun collector
   client/      src/{App,TreeMap,AgentDot,AgentList,useCollector}.tsx — React map
   hooks/       settings.snippet.json + install.ts (merge CLI)
-  demo/        simulate.ts (fake event generator)
 ```
 
 ## Configuration

@@ -5,7 +5,7 @@
 > updated** when you change architecture, add features, or learn a non-obvious
 > fact. This file is provider-agnostic — nothing here assumes Claude Code.
 
-Last updated: 2026-06-20.
+Last updated: 2026-06-21.
 
 > Note: `fma` is already `bun link`-ed globally on this machine (lands in
 > `~/.bun/bin/fma`). To remove it: run `bun unlink` from the repo root.
@@ -15,12 +15,11 @@ A real-time, "Find My"-style dashboard that visualizes parallel Claude Code
 agents working on a codebase. The **repo's file tree is the map** (a treemap:
 directories are regions, files are cells), and each agent is a moving dot placed
 on the file it's currently touching. A side panel shows per-agent task, tool,
-file, elapsed time, recent activity, and (stubbed) token/cost. Clicking an agent
-zooms the map to its region and opens a detail panel.
+territory, interventions, and diagnostics. Clicking an agent zooms the map to
+its region and opens a detail panel.
 
 Data source: Claude Code's real **hook system** (native `type:"http"` hooks) →
-a local collector → WebSocket → React UI. A fake-event generator (`demo/`)
-exists for design/iteration without a live agent.
+a local collector → WebSocket → React UI.
 
 ## Tech stack & runtime
 - **TypeScript everywhere.** Monorepo with Bun workspaces.
@@ -58,7 +57,6 @@ collector isn't running the hooks fail instantly (no slowdown). Run `fma` in the
 ```bash
 bun run server              # collector + UI on :4000 (TARGET_REPO env or cwd)
 bun run client              # Vite dev server on :5173 (HMR; dev only)
-bun run demo                # fake hook events so the map moves
 bun run build               # build client/dist (what the collector serves)
 ```
 - Mapped repo: `TARGET_REPO=/path bun run server`. Port: `COLLECTOR_PORT=4100`.
@@ -140,18 +138,6 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
 - `cli/fma.ts` — the `fma` launcher (bin). `watch` (build-if-needed, start
   collector mapping cwd, serve UI, open browser, reuse a running collector),
   `install`/`uninstall` (global default, `--project` opt), `help`.
-- `demo/simulate.ts` — fake hook event generator; also creates/removes real files
-  under `demo/scratch/` to demonstrate the live-expanding map (auto-cleaned).
-- `demo/mission-control.ts` — deterministic hackathon fallback demo for the
-  territory features: two agents, one subagent, assigned territories,
-  allowed/risky/forbidden/touched overlays, boundary warnings, hard blocks, and
-  live map expansion. Run on a clean port with
-  `COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server`, then
-  `COLLECTOR_PORT=4100 bun run demo:mission` (or `-- --loop`).
-- `demo/swarm.ts` — high-density visual demo: defaults to 8 top-level agents and
-  2 subagents each, with territory missions, 8 slower movement waves, amber
-  breaches, and red blocked edits. Run `COLLECTOR_PORT=4100 bun run demo:swarm`;
-  tune with `-- --agents 10 --subagents 3 --waves 10 --pace 2 --loop`.
 
 ## Key behaviors & non-obvious decisions
 - **Live file map (expand/contract).** The collector re-scans the repo (debounced
@@ -164,19 +150,21 @@ WebSocket protocol (server→client), defined in `shared/types.ts` `ServerMessag
   Do not revert to size weighting without restoring visibility for tiny files.
 - **Dots are HTML, in a transform layer counter-scaled by `1/k`** so they stay a
   constant screen size while the map zooms. File cells are SVG.
-- **Territory assignment is drag-first.** Drag an agent dot onto the treemap to
-  assign the containing folder as `mission.allowedGlobs` (e.g. `client/src/**`).
-  Focused agents show mission overlays: allowed, risky (outside territory),
-  forbidden (`denyGlobs`), and touched files. "Completed" is intentionally NOT
-  shown because there is no reliable per-file completion signal from hooks.
+- **Drag-to-steer has two modes.** Drag an agent dot onto a folder to assign the
+  containing folder as `mission.allowedGlobs` (e.g. `client/src/**`). Drag onto a
+  file to create `agent.focusRequest`, which injects a one-shot focus instruction
+  on the next eligible hook; the dot does not move until the agent actually
+  touches the file. Focused agents show mission overlays: allowed, risky
+  (outside territory), forbidden (`denyGlobs`), and touched files. "Completed" is
+  intentionally NOT shown because there is no reliable per-file completion signal
+  from hooks.
 - **Token/cost is STUBBED** end-to-end (`isStub:true`, "stub" chip in UI). The
   swap-in point is `TokenSource` in `server/src/tokens.ts`.
 - **"Progress" in the detail panel is estimated** from agent lifecycle/status
   (Started/Active/Finished), not real progress — it's explicitly tagged
   "estimated". There is no real progress signal from hooks.
 - **`.gitignore` is honored by the map scan.** Good for real repos (keeps
-  node_modules/build off the map). Note: `demo/scratch/` is intentionally NOT
-  gitignored, or the demo's created files would be hidden from the map.
+  node_modules/build off the map).
 
 ## Alignment Autopilot (closed control loop — the flagship AI feature)
 Turns the tool from observability into a controller: it knows each agent's
@@ -223,21 +211,6 @@ territory; focused map overlays allowed/risky/forbidden/touched files
 section (state + reason + correction), and an Interventions timeline
 (`AgentDetail.tsx`); live intervention strip + Autopilot control in `App.tsx`;
 `ALIGNMENT` palette in `ui.ts`.
-
-**Demo:** `bun run demo:autopilot` (`demo/autopilot.ts`) — sets a mission with an
-off-limits zone, drives an agent that drifts into it (instant guardrail **block** +
-AI judges **off_track**), then course-corrects (**recovered**). Needs the collector
-running with `ANTHROPIC_API_KEY`.
-
-**Reliable no-API demo:** `bun run demo:mission` (`demo/mission-control.ts`) —
-sets missions through `/api/mission` and posts fake hook events to show the
-territory overlay story without a real Claude session or API key. Recommended
-hackathon setup: `bun run build`, then
-`COLLECTOR_PORT=4100 REDIS_URL= TARGET_REPO=$PWD bun run server`, open
-`http://localhost:4100`, and run
-`COLLECTOR_PORT=4100 bun run demo:mission -- --loop` in another terminal.
-Use `bun run demo:swarm` when you want a more crowded visual with many concurrent
-agents/subagents; use `demo:mission` when you want the clearer judge narrative.
 
 ## Redis Agent Memory (durable state + semantic recall)
 Optional Redis layer that makes the project durable and gives the Autopilot
@@ -298,10 +271,8 @@ Everything else (collector, treemap, UI, store) is plain TS and portable.
 
 ## Verification checklist (do this after changes)
 1. `bunx tsc --noEmit` is clean.
-2. `bun run server` + `bun run client` + `bun run demo` → in the browser the map
-   shows dots moving, the `demo/scratch` files appear then disappear (expand/
-   contract), and clicking an agent zooms + opens the detail panel.
-3. For real-session work: install hooks into a scratch repo, point `TARGET_REPO`
+2. `bun run build` succeeds.
+3. Install hooks into a development repo, point `TARGET_REPO`
    at it, run the agent, create/delete a file, confirm the cell appears/vanishes
    within ~1-2s.
-4. `cd client && bunx vite build` succeeds.
+4. In the browser, confirm clicking an agent zooms + opens the detail panel.

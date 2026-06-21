@@ -119,6 +119,19 @@ export function containingFolder(
   return best ?? layout.byPath.get("") ?? null;
 }
 
+export function rectAtPoint(
+  layout: Layout,
+  x: number,
+  y: number,
+): Rect | null {
+  let best: Rect | null = null;
+  for (const r of layout.rects) {
+    if (x < r.x0 || x > r.x1 || y < r.y0 || y > r.y1) continue;
+    if (!best || r.depth > best.depth) best = r;
+  }
+  return best ?? layout.byPath.get("") ?? null;
+}
+
 function inRegion(path: string, region: string | null): boolean {
   if (!region) return true;
   return path === region || path.startsWith(region + "/");
@@ -323,7 +336,7 @@ export function DropTargetHighlight({ rect }: { rect: Rect | null }) {
       />
       {w > 70 && h > 22 && (
         <text x={rect.x0 + 8} y={rect.y0 + 28} className="drop-label" fill="var(--accent)">
-          assign territory: {rect.path || "repo"}
+          {rect.type === "file" ? "request focus" : "assign territory"}: {rect.path || "repo"}
         </text>
       )}
     </g>

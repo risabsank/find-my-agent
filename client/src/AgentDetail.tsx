@@ -173,6 +173,11 @@ export function AgentDetail({
         <div className="mission-summary mono">
           territory · {shortGlobs(agent.mission?.allowedGlobs)}
         </div>
+        {agent.focusRequest && (
+          <div className={"focus-request mono" + (agent.focusRequest.deliveredAt ? " focus-request--sent" : "")}>
+            focus {agent.focusRequest.deliveredAt ? "sent" : "requested"} · {agent.focusRequest.filePath}
+          </div>
+        )}
       </section>
 
       {align && align.state !== "unknown" && (

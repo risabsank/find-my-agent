@@ -24,6 +24,14 @@ export async function setMissionApi(
   }).catch(() => {});
 }
 
+export async function requestFocusApi(agentId: string, filePath: string): Promise<void> {
+  await fetch("/api/focus", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId, filePath }),
+  }).catch(() => {});
+}
+
 export async function setSupervisorApi(opts: {
   autonomous?: boolean;
   killSwitch?: boolean;

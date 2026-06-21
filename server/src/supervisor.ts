@@ -30,6 +30,7 @@ export interface Supervisor {
   status(): SupervisorStatus;
   setAutonomy(opts: { autonomous?: boolean; killSwitch?: boolean }): SupervisorStatus;
   setMission(agentId: string, mission: Mission): void;
+  requestFocus(agentId: string, filePath: string): void;
   /** Memory partition (the mapped repo name). */
   setRepo(name: string): void;
   /** Rehydrate persisted mission/interventions on boot (Redis). */
@@ -76,6 +77,10 @@ function outsideTerritory(path: string, mission: Mission): boolean {
   return mission.allowedGlobs.length > 0 && !mission.allowedGlobs.some((g) => matchGlob(path, g));
 }
 
+function focusContext(filePath: string): string {
+  return `User focus request: continue by inspecting or editing \`${filePath}\` if it is relevant to your current task. Do not mark this complete until you have actually touched that file.`;
+}
+
 // ---- no-API-key fallback ----------------------------------------------------
 export class DisabledSupervisor implements Supervisor {
   readonly enabled = false;
@@ -113,6 +118,10 @@ export class DisabledSupervisor implements Supervisor {
     persistMission(agentId, m);
     this.broadcastAgent(agentId, "Mission");
   }
+  requestFocus(agentId: string, filePath: string): void {
+    this.store.setFocusRequest(agentId, filePath);
+    this.broadcastAgent(agentId, "FocusRequest");
+  }
   setRepo(): void {}
   loadMission(agentId: string, mission: Mission): void {
     const m = normalizeMission(mission, mission.source ?? "manual");
@@ -146,10 +155,10 @@ export class DisabledSupervisor implements Supervisor {
   }
   decide(ev: NormalizedEvent): Decision {
     const mission = this.missions.get(ev.agentId);
-    if (!mission) return { kind: "allow" };
-    this.flagBoundary(ev, mission);
+    if (mission) this.flagBoundary(ev, mission);
     if (
       ev.event === "PreToolUse" &&
+      mission &&
       ev.filePath &&
       ev.tool &&
       EDIT_TOOLS.has(ev.tool) &&
@@ -160,6 +169,16 @@ export class DisabledSupervisor implements Supervisor {
       }. Do not modify it — return to the mission scope.`;
       this.log({ agentId: ev.agentId, kind: "block", reason, tool: ev.tool, filePath: ev.filePath, ts: Date.now() });
       return { kind: "deny", reason };
+    }
+    const focus = this.store.get(ev.agentId)?.focusRequest;
+    if (
+      focus &&
+      !focus.deliveredAt &&
+      (ev.event === "UserPromptSubmit" || ev.event === "PreToolUse")
+    ) {
+      this.store.markFocusDelivered(ev.agentId);
+      this.broadcastAgent(ev.agentId, "FocusDelivered");
+      return { kind: "inject", context: focusContext(focus.filePath) };
     }
     return { kind: "allow" };
   }
@@ -315,6 +334,11 @@ export class ClaudeSupervisor implements Supervisor {
     this.lastJudged.delete(agentId); // force a re-judge next tick
   }
 
+  requestFocus(agentId: string, filePath: string): void {
+    this.store.setFocusRequest(agentId, filePath);
+    this.broadcastAgent(agentId, "FocusRequest");
+  }
+
   setRepo(name: string): void {
     if (name) this.repoName = name;
   }
@@ -372,6 +396,12 @@ export class ClaudeSupervisor implements Supervisor {
         this.log({ agentId: ev.agentId, kind: "block", reason, tool: ev.tool ?? undefined, filePath: ev.filePath ?? undefined, ts: Date.now() });
         return { kind: "deny", reason };
       }
+      const focus = this.store.get(ev.agentId)?.focusRequest;
+      if (focus && !focus.deliveredAt) {
+        this.store.markFocusDelivered(ev.agentId);
+        this.broadcastAgent(ev.agentId, "FocusDelivered");
+        return { kind: "inject", context: focusContext(focus.filePath) };
+      }
       if (this.killSwitch || !this.autonomous) return { kind: "allow" };
       // Otherwise, nudge with any queued correction.
       const steer = this.pendingSteer.get(ev.agentId);
@@ -382,8 +412,6 @@ export class ClaudeSupervisor implements Supervisor {
       }
       return { kind: "allow" };
     }
-
-    if (this.killSwitch || !this.autonomous) return { kind: "allow" };
 
     if (ev.event === "UserPromptSubmit") {
       const parts: string[] = [];
@@ -396,8 +424,15 @@ export class ClaudeSupervisor implements Supervisor {
         this.pendingSteer.delete(ev.agentId);
         parts.push(`Course-correction: ${steer}`);
       }
+      const focus = this.store.get(ev.agentId)?.focusRequest;
+      if (focus && !focus.deliveredAt) {
+        this.store.markFocusDelivered(ev.agentId);
+        this.broadcastAgent(ev.agentId, "FocusDelivered");
+        parts.push(focusContext(focus.filePath));
+      }
       if (parts.length) return { kind: "inject", context: parts.join("\n") };
     }
+    if (this.killSwitch || !this.autonomous) return { kind: "allow" };
     return { kind: "allow" };
   }
 

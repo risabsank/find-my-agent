@@ -150,6 +150,22 @@ export class AgentStore {
     return a;
   }
 
+  /** Queue a user-directed file focus request for the agent. */
+  setFocusRequest(agentId: string, filePath: string, now = Date.now()): AgentState | undefined {
+    const a = this.agents.get(agentId);
+    if (a) a.focusRequest = { filePath, requestedAt: now };
+    return a;
+  }
+
+  /** Mark the queued focus request as injected into the agent context. */
+  markFocusDelivered(agentId: string, now = Date.now()): AgentState | undefined {
+    const a = this.agents.get(agentId);
+    if (a?.focusRequest && !a.focusRequest.deliveredAt) {
+      a.focusRequest = { ...a.focusRequest, deliveredAt: now };
+    }
+    return a;
+  }
+
   snapshot(): AgentState[] {
     // Refresh stub token usage so a late-joining client sees current values.
     for (const a of this.agents.values()) {

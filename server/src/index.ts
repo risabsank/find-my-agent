@@ -235,6 +235,18 @@ const server = Bun.serve({
       return json({ ok: true });
     }
 
+    // Steering: ask an agent to focus a file on its next eligible hook.
+    if (url.pathname === "/api/focus" && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as {
+        agentId?: string;
+        filePath?: string;
+      };
+      if (!body.agentId) return json({ ok: false, error: "agentId required" }, 400);
+      if (!body.filePath) return json({ ok: false, error: "filePath required" }, 400);
+      supervisor.requestFocus(body.agentId, body.filePath);
+      return json({ ok: true });
+    }
+
     // Autopilot: toggle autonomy / kill-switch, or read status.
     if (url.pathname === "/api/supervisor") {
       if (req.method === "POST") {

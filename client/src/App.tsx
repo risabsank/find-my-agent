@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { useCollector, setMissionApi, setSupervisorApi } from "./useCollector.ts";
+import { useCollector, requestFocusApi, setMissionApi, setSupervisorApi } from "./useCollector.ts";
 import {
   useTreemapLayout,
   Territory,
@@ -9,6 +9,7 @@ import {
   regionRect,
   cellCenter,
   containingFolder,
+  rectAtPoint,
   type FileOverlay,
   type Rect,
 } from "./TreeMap.tsx";
@@ -237,7 +238,7 @@ export function App() {
     suppressClick.current = false;
     setDraggingId(agentId);
     const p = mapPoint(e.clientX, e.clientY);
-    setDropTarget(p ? containingFolder(layout, p.x, p.y) : null);
+    setDropTarget(p ? rectAtPoint(layout, p.x, p.y) : null);
   };
 
   useEffect(() => {
@@ -245,19 +246,25 @@ export function App() {
     const onMove = (e: PointerEvent) => {
       dragMoved.current = true;
       const p = mapPoint(e.clientX, e.clientY);
-      setDropTarget(p ? containingFolder(layout, p.x, p.y) : null);
+      setDropTarget(p ? rectAtPoint(layout, p.x, p.y) : null);
     };
     const onUp = () => {
       const target = dropTargetRef.current;
       const agent = agents.find((a) => a.agentId === draggingId);
       if (agent && target && dragMoved.current) {
-        const allowedGlobs = [target.path ? `${target.path}/**` : "**"];
-        void setMissionApi(agent.agentId, {
-          goal: agent.mission?.goal ?? agent.taskLabel ?? "",
-          allowedGlobs,
-          guardrails: agent.mission?.guardrails ?? [],
-          denyGlobs: agent.mission?.denyGlobs ?? [],
-        });
+        if (target.type === "file") {
+          void requestFocusApi(agent.agentId, target.path);
+          setFocusId(agent.agentId);
+        } else {
+          const folder = containingFolder(layout, (target.x0 + target.x1) / 2, (target.y0 + target.y1) / 2);
+          const allowedGlobs = [folder?.path ? `${folder.path}/**` : "**"];
+          void setMissionApi(agent.agentId, {
+            goal: agent.mission?.goal ?? agent.taskLabel ?? "",
+            allowedGlobs,
+            guardrails: agent.mission?.guardrails ?? [],
+            denyGlobs: agent.mission?.denyGlobs ?? [],
+          });
+        }
         suppressClick.current = true;
       }
       setDraggingId(null);
